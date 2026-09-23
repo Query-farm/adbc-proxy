@@ -1,3 +1,18 @@
+// Copyright (c) 2026 ADBC Drivers Contributors
+// Copyright (c) 2026 Query Farm LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -21,7 +36,7 @@ use adbc_proxy_server::config::TargetConfig;
 use adbc_proxy_server::service::build_server;
 use adbc_proxy_server::session::SessionManager;
 use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator, RecordBatchReader, StringArray};
-use arrow_schema::{DataType, Field, Schema};
+use arrow_schema::{ArrowError, DataType, Field, Schema};
 use vgi_rpc::AuthContext;
 use vgi_rpc::auth::bearer::bearer_authenticate_static;
 use vgi_rpc::http::HttpState;
@@ -76,7 +91,11 @@ impl BackendConnection for FakeConnection {
         &self,
         _codes: Option<HashSet<InfoCode>>,
     ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
-        string_reader("info", "fake")
+        let schema = adbc_core::schemas::GET_INFO_SCHEMA.clone();
+        Ok(Box::new(RecordBatchIterator::new(
+            Vec::<Result<RecordBatch, ArrowError>>::new().into_iter(),
+            schema,
+        )))
     }
 
     fn get_objects(

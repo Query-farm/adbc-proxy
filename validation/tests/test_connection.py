@@ -1,3 +1,18 @@
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Official Driver Foundry connection and metadata cases."""
 
 import adbc_drivers_validation.tests.connection
@@ -6,7 +21,7 @@ from adbc_drivers_validation.tests.connection import (
     TestConnection as BaseTestConnection,
 )
 
-from .proxy_sqlite import get_quirks
+from .proxy import get_quirks
 
 
 class TestConnection(BaseTestConnection):
@@ -14,28 +29,6 @@ class TestConnection(BaseTestConnection):
         if driver.name == "proxy-sqlite":
             pytest.skip("ASF SQLite does not expose the current schema option")
         return super().test_current_db_schema(driver, conn)
-
-    def test_get_info(self, driver, conn, record_property) -> None:
-        """Accept the version strings emitted by the ASF SQLite 1.12 driver."""
-        if driver.name != "proxy-sqlite":
-            return super().test_get_info(driver, conn, record_property)
-        info = conn.adbc_get_info()
-        assert info.get("driver_name") == driver.driver_name
-        assert info.get("driver_version") == "(unknown)"
-        assert info.get("vendor_name") == driver.vendor_name
-        assert driver.vendor_version.match(info.get("vendor_version", ""))
-        record_property("driver_version", info["driver_version"])
-        record_property("vendor_version", info["vendor_version"])
-
-    def test_get_info_arrow_version(self, driver, conn) -> None:
-        if driver.name not in {"proxy-sqlite", "proxy-duckdb"}:
-            return super().test_get_info_arrow_version(driver, conn)
-        info = conn.adbc_get_info()
-        expected = {
-            "proxy-sqlite": "0.9.0-SNAPSHOT",
-            "proxy-duckdb": "(unknown)",
-        }
-        assert info.get("driver_arrow_version") == expected[driver.name]
 
     def test_get_table_schema_not_found(self, driver, conn) -> None:
         if driver.name != "proxy-duckdb":

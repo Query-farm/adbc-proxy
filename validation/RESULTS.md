@@ -1,3 +1,20 @@
+<!--
+  Copyright (c) 2026 ADBC Drivers Contributors
+  Copyright (c) 2026 Query Farm LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
 # Validation results
 
 Last run: 2026-09-23 on macOS 15.6.1 arm64.
@@ -54,7 +71,7 @@ with SQLFlite v1.5.5, DataFusion 0.25.0, and Trino 0.4.0 with Trino 483. The
 same pass reran SQLite, DuckDB, and PostgreSQL. Each smoke additionally proved
 that disallowed database and runtime connection options return
 `INVALID_ARGUMENT` without reflecting their values; SQLite supplied its real
-database `uri` from the client alongside an independent `adbc.proxy.uri`.
+database `uri` from the client alongside an independent `proxy.uri`.
 Microsoft SQL Server remains assigned to the x86 Linux CI service because the
 local host is arm64.
 
@@ -94,9 +111,9 @@ ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh foundry postgresql -q
 Result:
 
 ```text
-SQLite:     148 passed, 135 skipped, 0 failed
-DuckDB:     127 passed, 156 skipped, 0 failed
-PostgreSQL: 209 passed, 74 skipped, 0 failed
+SQLite:     164 passed, 167 skipped, 3 xfailed, 0 failed
+DuckDB:     141 passed, 190 skipped, 3 xfailed, 0 failed
+PostgreSQL: 233 passed, 98 skipped, 3 xfailed, 0 failed
 ```
 
 Focused `test_get_statistics or test_execute_schema` runs produced 5 passes on
@@ -104,21 +121,18 @@ DuckDB and 17 passes on PostgreSQL, with zero failures. This confirms these
 operations cross the exported proxy C ABI and VGI/HTTP boundary; they are not
 merely direct-driver checks.
 
-That is **849 selected test invocations** across the three backends, with 484
-passes and 365 explicit skips. Each backend selects 283 invocations.
-`pytest --collect-only` reports 386 per backend
-before Foundry's `pytest_collection_modifyitems` hook removes its 102
-`test_show_queries` development cases and one interactive `test_repl` case;
-the emitted node-id list and the actual run both contain 283. An earlier
-collection reported 354 because it covered only query and statement modules,
-before the 32 raw connection cases were added. It is a pre-filter count, not a
-different executed suite.
+That is **1,002 selected test invocations** across the three backends, with
+538 passes, 455 explicit skips, nine expected downstream-driver failures, and
+zero unexpected failures. Each backend selects 334 invocations. The expected
+failures cover downstream bulk-ingest status behavior that the proxy preserves:
+schema mismatch on append/create-append, existing-table create conflicts, and
+DuckDB's unbound-ingest no-op.
 
-The adapter imports the official Foundry connection, query, and statement test
-classes. Passing cases include connection metadata/object discovery and
-filters, table schema, SQL queries, parameter batch and stream binding,
-prepare, parameter schema, transaction toggling, DML row counts, Unicode, and
-Arrow stream results.
+The adapter imports the official Foundry connection, query, statement, and
+ingest test classes. Passing cases include connection metadata/object discovery
+and filters, table schema, SQL queries, parameter batch and stream binding,
+prepare, parameter schema, transaction toggling, DML row counts, bulk ingest,
+Unicode, and Arrow stream results.
 
 The skips are explicit capability/backend declarations:
 

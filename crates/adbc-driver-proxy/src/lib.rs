@@ -1,3 +1,18 @@
+// Copyright (c) 2026 ADBC Drivers Contributors
+// Copyright (c) 2026 Query Farm LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! ADBC 1.1 client driver for the ADBC proxy service.
 
 mod iroh_pool;
@@ -17,25 +32,31 @@ use adbc_core::{
     CancelHandle, Connection, Database, Driver, Optionable, PartitionedResult, Statement,
 };
 use adbc_proxy_protocol as protocol;
-use arrow_array::{Array, BinaryArray, Int64Array, RecordBatch, RecordBatchReader, StringArray};
-use arrow_schema::{ArrowError, Schema, SchemaRef};
+use arrow_array::{
+    Array, ArrayRef, BinaryArray, Int64Array, RecordBatch, RecordBatchReader, StringArray,
+    UInt32Array, UnionArray, new_empty_array, new_null_array,
+};
+use arrow_buffer::ScalarBuffer;
+use arrow_schema::{ArrowError, DataType, Schema, SchemaRef, UnionMode};
 use rustls::pki_types::pem::PemObject;
 use vgi_rpc_client::{HttpClient, Metadata, RpcClient, RpcError};
 use vgi_rpc_iroh::IrohTarget;
 
 pub const DRIVER_NAME: &str = "adbc_driver_proxy";
-pub const OPTION_PROXY_URI: &str = "adbc.proxy.uri";
-pub const OPTION_TARGET: &str = "adbc.proxy.target";
-pub const OPTION_BEARER_TOKEN: &str = "adbc.proxy.auth.bearer_token";
-pub const OPTION_REQUEST_TIMEOUT_MS: &str = "adbc.proxy.request_timeout_ms";
-pub const OPTION_MAX_RESPONSE_BYTES: &str = "adbc.proxy.max_response_bytes";
-pub const OPTION_MAX_BIND_BYTES: &str = "adbc.proxy.max_bind_bytes";
-pub const OPTION_TLS_CA: &str = "adbc.proxy.tls.ca";
-pub const OPTION_TLS_CERT: &str = "adbc.proxy.tls.cert";
-pub const OPTION_TLS_KEY: &str = "adbc.proxy.tls.key";
-pub const OPTION_TLS_SERVER_NAME: &str = "adbc.proxy.tls.server_name";
-pub const OPTION_IROH_SECRET_KEY: &str = "adbc.proxy.iroh.secret_key";
-pub const OPTION_IROH_DIRECT_ADDRESS: &str = "adbc.proxy.iroh.direct_address";
+pub const DRIVER_INFO_NAME: &str = "ADBC Proxy Driver";
+pub const DRIVER_ARROW_VERSION: &str = "v59";
+pub const OPTION_PROXY_URI: &str = "proxy.uri";
+pub const OPTION_TARGET: &str = "proxy.target";
+pub const OPTION_BEARER_TOKEN: &str = "proxy.auth.bearer_token";
+pub const OPTION_REQUEST_TIMEOUT_MS: &str = "proxy.request_timeout_ms";
+pub const OPTION_MAX_RESPONSE_BYTES: &str = "proxy.max_response_bytes";
+pub const OPTION_MAX_BIND_BYTES: &str = "proxy.max_bind_bytes";
+pub const OPTION_TLS_CA: &str = "proxy.tls.ca";
+pub const OPTION_TLS_CERT: &str = "proxy.tls.cert";
+pub const OPTION_TLS_KEY: &str = "proxy.tls.key";
+pub const OPTION_TLS_SERVER_NAME: &str = "proxy.tls.server_name";
+pub const OPTION_IROH_SECRET_KEY: &str = "proxy.iroh.secret_key";
+pub const OPTION_IROH_DIRECT_ADDRESS: &str = "proxy.iroh.direct_address";
 const DEFAULT_REQUEST_TIMEOUT_MS: i64 = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES: i64 = 256 * 1024 * 1024;
 const DEFAULT_MAX_BIND_BYTES: i64 = protocol::MAX_BIND_STREAM_BYTES as i64;
@@ -292,11 +313,21 @@ impl Connection for ProxyConnection {
         &self,
         codes: Option<HashSet<InfoCode>>,
     ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
-        let codes = codes.map(|values| values.iter().map(u32::from).collect::<Vec<_>>());
-        self.remote.connection_stream_call(
+        let wire_codes = codes
+            .as_ref()
+            .map(|values| values.iter().map(u32::from).collect::<Vec<_>>());
+        let downstream = self.remote.connection_stream_call(
             protocol::method::GET_INFO,
-            serde_json::json!({ "codes": codes }),
-        )
+            serde_json::json!({ "codes": wire_codes }),
+        )?;
+        let schema = downstream.schema();
+        let proxy_batch = proxy_info_batch(codes.as_ref(), schema.clone())?;
+        Ok(Box::new(ProxyInfoReader {
+            proxy_batch,
+            downstream,
+            pending: VecDeque::new(),
+            schema,
+        }))
     }
 
     fn get_objects(
@@ -383,6 +414,154 @@ impl Connection for ProxyConnection {
             .call(protocol::method::READ_PARTITION, &request)?;
         self.remote.reader_from_response(&response)
     }
+}
+
+struct ProxyInfoReader {
+    proxy_batch: Option<RecordBatch>,
+    downstream: Box<dyn RecordBatchReader + Send + 'static>,
+    pending: VecDeque<RecordBatch>,
+    schema: SchemaRef,
+}
+
+impl Iterator for ProxyInfoReader {
+    type Item = std::result::Result<RecordBatch, ArrowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(batch) = self.proxy_batch.take() {
+            return Some(Ok(batch));
+        }
+        if let Some(batch) = self.pending.pop_front() {
+            return Some(Ok(batch));
+        }
+
+        loop {
+            let batch = self.downstream.next()?;
+            let batch = match batch {
+                Ok(batch) => batch,
+                Err(error) => return Some(Err(error)),
+            };
+            let Some(info_names) = batch
+                .column_by_name("info_name")
+                .and_then(|array| array.as_any().downcast_ref::<UInt32Array>())
+            else {
+                return Some(Err(ArrowError::SchemaError(
+                    "GetInfo response is missing its UInt32 info_name column".to_string(),
+                )));
+            };
+            let mut run_start = None;
+            for (index, code) in info_names.values().iter().enumerate() {
+                if is_proxy_driver_info(*code) {
+                    if let Some(start) = run_start.take() {
+                        self.pending.push_back(batch.slice(start, index - start));
+                    }
+                } else if run_start.is_none() {
+                    run_start = Some(index);
+                }
+            }
+            if let Some(start) = run_start {
+                self.pending
+                    .push_back(batch.slice(start, batch.num_rows() - start));
+            }
+            if let Some(batch) = self.pending.pop_front() {
+                return Some(Ok(batch));
+            }
+        }
+    }
+}
+
+impl RecordBatchReader for ProxyInfoReader {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+fn proxy_info_batch(
+    codes: Option<&HashSet<InfoCode>>,
+    schema: SchemaRef,
+) -> Result<Option<RecordBatch>> {
+    let requested = |code: InfoCode| codes.is_none_or(|values| values.contains(&code));
+    let mut info_names = Vec::new();
+    let mut type_ids = Vec::new();
+    let mut offsets = Vec::new();
+    let mut strings = Vec::new();
+    let mut integers = Vec::new();
+
+    {
+        let mut add_string = |code: InfoCode, value: &str| {
+            info_names.push(u32::from(&code));
+            type_ids.push(0_i8);
+            offsets.push(strings.len() as i32);
+            strings.push(value.to_string());
+        };
+
+        if requested(InfoCode::DriverName) {
+            add_string(InfoCode::DriverName, DRIVER_INFO_NAME);
+        }
+        if requested(InfoCode::DriverVersion) {
+            add_string(InfoCode::DriverVersion, env!("CARGO_PKG_VERSION"));
+        }
+        if requested(InfoCode::DriverArrowVersion) {
+            add_string(InfoCode::DriverArrowVersion, DRIVER_ARROW_VERSION);
+        }
+    }
+    if requested(InfoCode::DriverAdbcVersion) {
+        info_names.push(u32::from(&InfoCode::DriverAdbcVersion));
+        type_ids.push(2_i8);
+        offsets.push(integers.len() as i32);
+        integers.push(i64::from(adbc_core::constants::ADBC_VERSION_1_1_0));
+    }
+
+    if info_names.is_empty() {
+        return Ok(None);
+    }
+
+    let DataType::Union(fields, mode) = schema.field(1).data_type() else {
+        return Err(internal("ADBC GetInfo schema does not contain a union"));
+    };
+    let mode = *mode;
+    let row_count = type_ids.len();
+    let children = fields
+        .iter()
+        .map(|(type_id, field)| -> ArrayRef {
+            match (mode, type_id) {
+                (UnionMode::Dense, 0) => Arc::new(StringArray::from(strings.clone())),
+                (UnionMode::Dense, 2) => Arc::new(Int64Array::from(integers.clone())),
+                (UnionMode::Dense, _) => new_empty_array(field.data_type()),
+                (UnionMode::Sparse, 0) => Arc::new(StringArray::from(
+                    type_ids
+                        .iter()
+                        .zip(offsets.iter())
+                        .map(|(id, offset)| (*id == 0).then(|| strings[*offset as usize].clone()))
+                        .collect::<Vec<_>>(),
+                )),
+                (UnionMode::Sparse, 2) => Arc::new(Int64Array::from(
+                    type_ids
+                        .iter()
+                        .zip(offsets.iter())
+                        .map(|(id, offset)| (*id == 2).then(|| integers[*offset as usize]))
+                        .collect::<Vec<_>>(),
+                )),
+                (UnionMode::Sparse, _) => new_null_array(field.data_type(), row_count),
+            }
+        })
+        .collect();
+    let values = UnionArray::try_new(
+        fields.clone(),
+        ScalarBuffer::from(type_ids),
+        (mode == UnionMode::Dense).then(|| ScalarBuffer::from(offsets)),
+        children,
+    )?;
+    Ok(Some(RecordBatch::try_new(
+        schema,
+        vec![Arc::new(UInt32Array::from(info_names)), Arc::new(values)],
+    )?))
+}
+
+fn is_proxy_driver_info(code: u32) -> bool {
+    code == u32::from(&InfoCode::DriverName)
+        || code == u32::from(&InfoCode::DriverVersion)
+        || code == u32::from(&InfoCode::DriverArrowVersion)
+        || code == u32::from(&InfoCode::DriverAdbcVersion)
 }
 
 struct ProxyConnectionCancelHandle {
@@ -1684,5 +1863,68 @@ mod tests {
                 .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn proxy_get_info_identifies_the_client_driver() {
+        let batch = proxy_info_batch(None, adbc_core::schemas::GET_INFO_SCHEMA.clone())
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.schema(), adbc_core::schemas::GET_INFO_SCHEMA.clone());
+        assert_eq!(batch.num_rows(), 4);
+
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap();
+        let values = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<UnionArray>()
+            .unwrap();
+        let index = names
+            .values()
+            .iter()
+            .position(|code| *code == u32::from(&InfoCode::DriverAdbcVersion))
+            .unwrap();
+        assert_eq!(values.type_id(index), 2);
+        let integers = values
+            .child(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(
+            integers.value(values.value_offset(index)),
+            i64::from(adbc_core::constants::ADBC_VERSION_1_1_0)
+        );
+    }
+
+    #[test]
+    fn proxy_get_info_matches_a_sparse_downstream_union() {
+        let canonical = adbc_core::schemas::GET_INFO_SCHEMA.clone();
+        let DataType::Union(fields, _) = canonical.field(1).data_type() else {
+            panic!("GetInfo value must be a union");
+        };
+        let schema = Arc::new(Schema::new(vec![
+            canonical.field(0).clone(),
+            arrow_schema::Field::new(
+                "info_value",
+                DataType::Union(fields.clone(), UnionMode::Sparse),
+                true,
+            ),
+        ]));
+
+        let batch = proxy_info_batch(None, schema.clone()).unwrap().unwrap();
+        assert_eq!(batch.schema(), schema);
+        let values = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<UnionArray>()
+            .unwrap();
+        assert!(values.offsets().is_none());
+        for (type_id, _) in fields.iter() {
+            assert_eq!(values.child(type_id).len(), batch.num_rows());
+        }
     }
 }

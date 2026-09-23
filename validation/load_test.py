@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Concurrent end-to-end load and soak test for the exported proxy driver."""
 
 from __future__ import annotations
@@ -33,17 +48,17 @@ def database_options() -> dict[str, str]:
     options = {
         "driver": str(Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)),
         "entrypoint": "AdbcDriverProxyInit",
-        "adbc.proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
-        "adbc.proxy.target": require_env("ADBC_PROXY_TARGET"),
+        "proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
+        "proxy.target": require_env("ADBC_PROXY_TARGET"),
     }
     optional = {
-        "ADBC_PROXY_TOKEN": "adbc.proxy.auth.bearer_token",
-        "ADBC_PROXY_IROH_DIRECT_ADDRESS": "adbc.proxy.iroh.direct_address",
-        "ADBC_PROXY_IROH_SECRET_KEY": "adbc.proxy.iroh.secret_key",
-        "ADBC_PROXY_TLS_CA": "adbc.proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "adbc.proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "adbc.proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "adbc.proxy.tls.server_name",
+        "ADBC_PROXY_TOKEN": "proxy.auth.bearer_token",
+        "ADBC_PROXY_IROH_DIRECT_ADDRESS": "proxy.iroh.direct_address",
+        "ADBC_PROXY_IROH_SECRET_KEY": "proxy.iroh.secret_key",
+        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
+        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
+        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
+        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
     }
     for environment, option in optional.items():
         if value := os.environ.get(environment):
@@ -279,7 +294,9 @@ def main() -> None:
     args = parse_args()
     backend = require_env("ADBC_PROXY_BACKEND")
     transport = require_env("ADBC_PROXY_TRANSPORT")
-    server_pid = int(value) if (value := os.environ.get("ADBC_PROXY_SERVER_PID")) else None
+    server_pid = (
+        int(value) if (value := os.environ.get("ADBC_PROXY_SERVER_PID")) else None
+    )
 
     sampler = RssSampler(server_pid)
     sampler.start()
@@ -304,12 +321,10 @@ def main() -> None:
     sampler.stop()
 
     errors = [result.error for result in results if result.error]
-    latencies = [
-        latency
-        for result in results
-        for latency in result.latencies_seconds
+    latencies = [latency for result in results for latency in result.latencies_seconds]
+    connect_latencies = [
+        result.connect_seconds for result in results if not result.error
     ]
-    connect_latencies = [result.connect_seconds for result in results if not result.error]
     queries = sum(result.queries for result in results)
     rows = sum(result.rows for result in results)
     batches = sum(result.batches for result in results)
@@ -319,7 +334,9 @@ def main() -> None:
         "transport": transport,
         "platform": platform.platform(),
         "workers": args.workers,
-        "iterations_per_worker": args.iterations if args.duration_seconds == 0 else None,
+        "iterations_per_worker": args.iterations
+        if args.duration_seconds == 0
+        else None,
         "duration_target_seconds": args.duration_seconds or None,
         "dataset_rows": args.rows,
         "query_rows": args.query_rows,

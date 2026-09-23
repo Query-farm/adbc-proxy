@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Bounded-memory probes for proxy bind requests and result responses.
 
 The default run uses a small HTTP response budget so it is suitable for CI.
@@ -39,18 +54,18 @@ def options(response_budget: int) -> dict[str, Any]:
     result: dict[str, Any] = {
         "driver": str(Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)),
         "entrypoint": "AdbcDriverProxyInit",
-        "adbc.proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
-        "adbc.proxy.target": require_env("ADBC_PROXY_TARGET"),
-        "adbc.proxy.max_response_bytes": response_budget,
+        "proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
+        "proxy.target": require_env("ADBC_PROXY_TARGET"),
+        "proxy.max_response_bytes": response_budget,
     }
     optional = {
-        "ADBC_PROXY_TOKEN": "adbc.proxy.auth.bearer_token",
-        "ADBC_PROXY_IROH_DIRECT_ADDRESS": "adbc.proxy.iroh.direct_address",
-        "ADBC_PROXY_IROH_SECRET_KEY": "adbc.proxy.iroh.secret_key",
-        "ADBC_PROXY_TLS_CA": "adbc.proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "adbc.proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "adbc.proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "adbc.proxy.tls.server_name",
+        "ADBC_PROXY_TOKEN": "proxy.auth.bearer_token",
+        "ADBC_PROXY_IROH_DIRECT_ADDRESS": "proxy.iroh.direct_address",
+        "ADBC_PROXY_IROH_SECRET_KEY": "proxy.iroh.secret_key",
+        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
+        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
+        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
+        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
     }
     for environment, option in optional.items():
         if value := os.environ.get(environment):
@@ -58,7 +73,7 @@ def options(response_budget: int) -> dict[str, Any]:
     if value := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
         result["uri"] = value
     if value := os.environ.get("ADBC_PROXY_MAX_BIND_BYTES"):
-        result["adbc.proxy.max_bind_bytes"] = int(value)
+        result["proxy.max_bind_bytes"] = int(value)
     return result
 
 
@@ -106,7 +121,11 @@ def capture(action: Callable[[], Any]) -> dict[str, Any]:
     started = time.perf_counter()
     try:
         value = action()
-        return {"outcome": "accepted", "value": value, "seconds": time.perf_counter() - started}
+        return {
+            "outcome": "accepted",
+            "value": value,
+            "seconds": time.perf_counter() - started,
+        }
     except Exception as error:  # Validation deliberately records boundary errors.
         return {
             "outcome": "rejected",
@@ -168,7 +187,9 @@ def bind_once(connection: Any, backend: str, payload_size: int, stream: bool) ->
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--heavy", action="store_true", help="run real 64 MiB bind cases")
+    parser.add_argument(
+        "--heavy", action="store_true", help="run real 64 MiB bind cases"
+    )
     parser.add_argument("--response-budget-mib", type=int, default=2)
     parser.add_argument("--settle-seconds", type=float, default=1.0)
     parser.add_argument(
@@ -188,7 +209,9 @@ def main() -> None:
     args = parse_args()
     backend = require_env("ADBC_PROXY_BACKEND")
     transport = require_env("ADBC_PROXY_TRANSPORT")
-    server_pid = int(value) if (value := os.environ.get("ADBC_PROXY_SERVER_PID")) else None
+    server_pid = (
+        int(value) if (value := os.environ.get("ADBC_PROXY_SERVER_PID")) else None
+    )
     budget = args.response_budget_mib * MIB
     configured_bind_cap = int(os.environ.get("ADBC_PROXY_MAX_BIND_BYTES", BIND_CAP))
     server_bind_cap = int(
@@ -227,7 +250,9 @@ def main() -> None:
             }
         recovery = query_blob(connection, backend, 1)
         if recovery != 1:
-            raise AssertionError("connection did not recover after response boundary probes")
+            raise AssertionError(
+                "connection did not recover after response boundary probes"
+            )
 
         if args.heavy or "ADBC_PROXY_MAX_BIND_BYTES" in os.environ:
             statement_update(connection, "DROP TABLE IF EXISTS proxy_large_payload")
@@ -247,9 +272,7 @@ def main() -> None:
                     ("above", configured_bind_cap + margin),
                 ]
                 if args.heavy and configured_bind_cap == BIND_CAP:
-                    cases.insert(
-                        1, ("below_arrow_cap_near_envelope", BIND_CAP - 512)
-                    )
+                    cases.insert(1, ("below_arrow_cap_near_envelope", BIND_CAP - 512))
                 for label, size in cases:
                     report["bind_cases"][f"{binding}_{label}"] = {
                         "payload_bytes": size,
@@ -269,7 +292,9 @@ def main() -> None:
                         ),
                     }
                 if query_blob(connection, backend, 1) != 1:
-                    raise AssertionError(f"connection unusable after {binding} rejection")
+                    raise AssertionError(
+                        f"connection unusable after {binding} rejection"
+                    )
                 gc.collect()
                 report["rss_kib"][f"after_{binding}"] = rss_kib(server_pid)
 
@@ -306,14 +331,18 @@ def main() -> None:
     if below != "accepted":
         raise AssertionError(f"below-budget response was unexpectedly {below}")
     if http and above != "rejected":
-        raise AssertionError("HTTP response above accepted_max_response_bytes was not rejected")
+        raise AssertionError(
+            "HTTP response above accepted_max_response_bytes was not rejected"
+        )
     if not http and above != "accepted":
-        raise AssertionError(f"{transport} incorrectly applied the HTTP response budget")
+        raise AssertionError(
+            f"{transport} incorrectly applied the HTTP response budget"
+        )
     if args.heavy and configured_bind_cap == BIND_CAP:
         for binding in ("bind", "bind_stream"):
-            near = report["bind_cases"][
-                f"{binding}_below_arrow_cap_near_envelope"
-            ]["outcome"]
+            near = report["bind_cases"][f"{binding}_below_arrow_cap_near_envelope"][
+                "outcome"
+            ]
             expected = "accepted"
             if near != expected:
                 raise AssertionError(
@@ -330,8 +359,13 @@ def main() -> None:
                 if report["bind_cases"][f"{binding}_{label}"]["outcome"] != "rejected":
                     raise AssertionError(f"{binding} {label} was not rejected")
             if server_bind_cap < configured_bind_cap:
-                if report["bind_cases"][f"{binding}_server_limit"]["outcome"] != "rejected":
-                    raise AssertionError(f"server did not independently enforce {binding} cap")
+                if (
+                    report["bind_cases"][f"{binding}_server_limit"]["outcome"]
+                    != "rejected"
+                ):
+                    raise AssertionError(
+                        f"server did not independently enforce {binding} cap"
+                    )
 
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.json_output:

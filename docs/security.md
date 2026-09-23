@@ -1,3 +1,20 @@
+<!--
+  Copyright (c) 2026 ADBC Drivers Contributors
+  Copyright (c) 2026 Query Farm LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
 # Security and resource controls
 
 The service authenticates every VGI HTTP request and binds persistent-transport
@@ -51,7 +68,7 @@ authorized principal from using another principal's connection handles.
 The server enforces independent limits on each decoded HTTP request, the
 cumulative native bind stream, request duration, global sessions, sessions per
 principal, and statements and results per session. `server.max_bind_bytes`
-defaults to 64 MiB; the client has a separate `adbc.proxy.max_bind_bytes`
+defaults to 64 MiB; the client has a separate `proxy.max_bind_bytes`
 defence. Bind batches are acknowledged one turn at a time and staged in an
 anonymous file, so raising the cumulative limit does not require buffering the
 whole stream in memory. The HTTP request budget remains a per-batch limit.

@@ -1,3 +1,20 @@
+<!--
+  Copyright (c) 2026 ADBC Drivers Contributors
+  Copyright (c) 2026 Query Farm LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
 <p align="center">
   <a href="https://query.farm">
     <img src="https://query.farm/media-kit/logo/wordmark-adaptive.svg" alt="Query.Farm" width="280">
@@ -10,7 +27,7 @@
   <a href="https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://arrow.apache.org/adbc/current/"><img src="https://img.shields.io/badge/Apache%20Arrow-ADBC-00A4E4?logo=apachearrow&amp;logoColor=white" alt="Apache Arrow ADBC"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.97%2B-000000?logo=rust&amp;logoColor=white" alt="Rust 1.97 or newer"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0 license"></a>
+  <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0 license"></a>
 </p>
 
 ADBC Proxy makes server-installed [ADBC](https://arrow.apache.org/adbc/current/)
@@ -88,7 +105,9 @@ The build produces:
 - `target/release/libadbc_driver_proxy.so` on Linux
 - `target/release/libadbc_driver_proxy.dylib` on macOS
 
-Windows builds are not yet covered by the project's CI matrix.
+Foundry packaging builds the client driver for Linux amd64/arm64, macOS arm64,
+and Windows amd64. End-to-end proxy-service validation currently runs on
+Linux.
 
 ### 3. Start the server
 
@@ -133,9 +152,9 @@ with adbc.connect(
     driver=proxy_driver,
     entrypoint="AdbcDriverProxyInit",
     db_kwargs={
-        "adbc.proxy.uri": "http://127.0.0.1:8080",
-        "adbc.proxy.target": "sqlite",
-        "adbc.proxy.auth.bearer_token": "development-token",
+        "proxy.uri": "http://127.0.0.1:8080",
+        "proxy.target": "sqlite",
+        "proxy.auth.bearer_token": "development-token",
     },
     autocommit=True,
 ) as connection:
@@ -198,7 +217,7 @@ allow every non-server-controlled option and are intended for trusted targets.
 Disallowed options are rejected rather than silently ignored. Proxy transport
 options are never forwarded.
 
-The explicit `adbc.proxy.uri` option identifies the proxy. When it is present,
+The explicit `proxy.uri` option identifies the proxy. When it is present,
 the standard ADBC `uri` database option is forwarded to the downstream driver,
 which supports caller-selected destinations when target policy allows it:
 
@@ -219,8 +238,8 @@ with adbc.connect(
     driver=proxy_driver,
     entrypoint="AdbcDriverProxyInit",
     db_kwargs={
-        "adbc.proxy.uri": "iroh://<proxy-endpoint-id>",
-        "adbc.proxy.target": "postgresql-byoc",
+        "proxy.uri": "iroh://<proxy-endpoint-id>",
+        "proxy.target": "postgresql-byoc",
         "uri": "postgresql://database.example/app",
         "username": "alice",
         "password": "...",
@@ -234,7 +253,7 @@ with adbc.connect(
 ```
 
 For compatibility, `uri` is still treated as the proxy endpoint when
-`adbc.proxy.uri` is absent; that legacy form cannot also provide a downstream
+`proxy.uri` is absent; that legacy form cannot also provide a downstream
 URI.
 
 `db_kwargs` and `conn_kwargs` set creation-time database and connection
@@ -283,18 +302,18 @@ Pass these as ADBC database options when opening the proxy driver:
 
 | Option | Purpose | Default |
 | --- | --- | --- |
-| `adbc.proxy.uri` | Proxy endpoint using `http://`, `https://`, `tcp://`, `tls+tcp://`, or `iroh://` | required (`uri` is a legacy fallback) |
-| `adbc.proxy.target` | Server-configured target name | required |
-| `adbc.proxy.auth.bearer_token` | HTTP(S) bearer token | none |
-| `adbc.proxy.request_timeout_ms` | Timeout for each RPC | `30000` |
-| `adbc.proxy.max_response_bytes` | Maximum accepted HTTP response size | `268435456` |
-| `adbc.proxy.max_bind_bytes` | Cumulative parameter-bind budget | `67108864` |
-| `adbc.proxy.tls.ca` | CA bundle for `tls+tcp://` | required for mTLS |
-| `adbc.proxy.tls.cert` | Client certificate chain for `tls+tcp://` | required for mTLS |
-| `adbc.proxy.tls.key` | Client private key for `tls+tcp://` | required for mTLS |
-| `adbc.proxy.tls.server_name` | TLS server name | endpoint host |
-| `adbc.proxy.iroh.secret_key` | Stable Iroh client secret key | generated per process |
-| `adbc.proxy.iroh.direct_address` | Direct Iroh `host:port` discovery hint | relay/discovery |
+| `proxy.uri` | Proxy endpoint using `http://`, `https://`, `tcp://`, `tls+tcp://`, or `iroh://` | required (`uri` is a legacy fallback) |
+| `proxy.target` | Server-configured target name | required |
+| `proxy.auth.bearer_token` | HTTP(S) bearer token | none |
+| `proxy.request_timeout_ms` | Timeout for each RPC | `30000` |
+| `proxy.max_response_bytes` | Maximum accepted HTTP response size | `268435456` |
+| `proxy.max_bind_bytes` | Cumulative parameter-bind budget | `67108864` |
+| `proxy.tls.ca` | CA bundle for `tls+tcp://` | required for mTLS |
+| `proxy.tls.cert` | Client certificate chain for `tls+tcp://` | required for mTLS |
+| `proxy.tls.key` | Client private key for `tls+tcp://` | required for mTLS |
+| `proxy.tls.server_name` | TLS server name | endpoint host |
+| `proxy.iroh.secret_key` | Stable Iroh client secret key | generated per process |
+| `proxy.iroh.direct_address` | Direct Iroh `host:port` discovery hint | relay/discovery |
 
 ## Transports
 
@@ -311,7 +330,7 @@ sidecar, or service mesh and keep the server listener on loopback. Setting
 does not add TLS.
 
 Plain TCP cannot be used when authentication is required. Production TCP uses
-the `[tcp.tls]` server configuration and the four `adbc.proxy.tls.*` client
+the `[tcp.tls]` server configuration and the four `proxy.tls.*` client
 options. [Iroh](https://www.iroh.computer/) provides authenticated QUIC
 connections with direct paths and relay fallback. Proxy servers map allowed
 client endpoint IDs to principals in `iroh.principals`; persist the server
@@ -391,4 +410,4 @@ Copyright 2026 [Query Farm LLC](https://query.farm).
 
 [![Built with Query.Farm](https://query.farm/media-kit/shields/built-with-query-farm.svg)](https://query.farm)
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the [Apache License, Version 2.0](LICENSE.txt).

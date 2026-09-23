@@ -1,3 +1,18 @@
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Declared proxy/backend capabilities for Driver Foundry validation."""
 
 from __future__ import annotations
@@ -7,24 +22,22 @@ import os
 import re
 from pathlib import Path
 
-import adbc_driver_manager
 from adbc_drivers_validation import model, quirks
 
 
 class ProxySqliteQuirks(model.DriverQuirks):
     name = "proxy-sqlite"
     driver = "adbc_driver_proxy"
-    # Connection metadata is intentionally forwarded from the downstream
-    # driver, so these are the ASF SQLite values rather than proxy branding.
-    driver_name = "ADBC SQLite Driver"
+    driver_name = "ADBC Proxy Driver"
     vendor_name = "SQLite"
     vendor_version = re.compile(r"3\..*")
-    short_version = "0.2.0"
+    short_version = "3.53"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         connection_transactions=True,
         get_objects=True,
         statement_bind=True,
+        statement_bulk_ingest=True,
         # The ASF SQLite driver returns NOT_IMPLEMENTED; the proxy preserves it.
         statement_execute_schema=False,
         statement_get_parameter_schema=True,
@@ -36,22 +49,22 @@ class ProxySqliteQuirks(model.DriverQuirks):
         current_schema="",
     )
     _database_options = {
-        "adbc.proxy.uri": model.FromEnv("ADBC_PROXY_ENDPOINT"),
-        "adbc.proxy.target": model.FromEnv("ADBC_PROXY_TARGET"),
+        "proxy.uri": model.FromEnv("ADBC_PROXY_ENDPOINT"),
+        "proxy.target": model.FromEnv("ADBC_PROXY_TARGET"),
     }
     if os.environ.get("ADBC_PROXY_TOKEN"):
-        _database_options["adbc.proxy.auth.bearer_token"] = model.FromEnv("ADBC_PROXY_TOKEN")
+        _database_options["proxy.auth.bearer_token"] = model.FromEnv("ADBC_PROXY_TOKEN")
     if os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
         _database_options["uri"] = model.FromEnv("ADBC_PROXY_DOWNSTREAM_URI")
     if os.environ.get("ADBC_PROXY_IROH_DIRECT_ADDRESS"):
-        _database_options["adbc.proxy.iroh.direct_address"] = model.FromEnv(
+        _database_options["proxy.iroh.direct_address"] = model.FromEnv(
             "ADBC_PROXY_IROH_DIRECT_ADDRESS"
         )
     for environment, option in {
-        "ADBC_PROXY_TLS_CA": "adbc.proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "adbc.proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "adbc.proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "adbc.proxy.tls.server_name",
+        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
+        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
+        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
+        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
     }.items():
         if os.environ.get(environment):
             _database_options[option] = model.FromEnv(environment)
@@ -82,6 +95,10 @@ class ProxySqliteQuirks(model.DriverQuirks):
             "type/select/float64",
             "type/select/int64",
             "type/select/string",
+            "ingest/binary",
+            "ingest/float64",
+            "ingest/int64",
+            "ingest/string",
         }
         for name, query in queries.queries.items():
             if name not in compatible:
@@ -97,10 +114,7 @@ class ProxySqliteQuirks(model.DriverQuirks):
         return queries
 
     def is_table_not_found(self, table_name: str | None, error: Exception) -> bool:
-        return (
-            isinstance(error, adbc_driver_manager.NotFoundError)
-            or "no such table" in str(error).lower()
-        )
+        return "no such table" in str(error).lower()
 
     def split_statement(self, statement: str) -> list[str]:
         return quirks.split_statement(statement, dialect="sqlite")
@@ -109,10 +123,10 @@ class ProxySqliteQuirks(model.DriverQuirks):
 class ProxyDuckdbQuirks(model.DriverQuirks):
     name = "proxy-duckdb"
     driver = "adbc_driver_proxy"
-    driver_name = "ADBC DuckDB Driver"
+    driver_name = "ADBC Proxy Driver"
     vendor_name = "duckdb"
     vendor_version = re.compile(r"v1\.5\..*")
-    short_version = "0.2.0"
+    short_version = "1.5"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         connection_get_statistics=True,
@@ -120,6 +134,7 @@ class ProxyDuckdbQuirks(model.DriverQuirks):
         # DuckDB 1.5.5 metadata differs from Foundry's generic hierarchy.
         get_objects=False,
         statement_bind=True,
+        statement_bulk_ingest=True,
         statement_execute_schema=True,
         statement_get_parameter_schema=True,
         statement_prepare=True,
@@ -145,6 +160,9 @@ class ProxyDuckdbQuirks(model.DriverQuirks):
             "type/select/float64",
             "type/select/int64",
             "type/select/string",
+            "ingest/float64",
+            "ingest/int64",
+            "ingest/string",
         }
         for name, query in queries.queries.items():
             if name not in compatible:
@@ -169,16 +187,17 @@ class ProxyDuckdbQuirks(model.DriverQuirks):
 class ProxyPostgresqlQuirks(model.DriverQuirks):
     name = "proxy-postgresql"
     driver = "adbc_driver_proxy"
-    driver_name = "ADBC PostgreSQL Driver"
+    driver_name = "ADBC Proxy Driver"
     vendor_name = "PostgreSQL"
     vendor_version = re.compile(r"14.*")
-    short_version = "0.2.0"
+    short_version = "14"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         connection_get_statistics=True,
         connection_transactions=True,
         get_objects=True,
         statement_bind=True,
+        statement_bulk_ingest=True,
         statement_execute_schema=True,
         statement_get_parameter_schema=True,
         statement_prepare=True,
@@ -238,6 +257,19 @@ class ProxyPostgresqlQuirks(model.DriverQuirks):
             "type/select/timestamp5tz",
             "type/select/timestamp6",
             "type/select/timestamp6tz",
+            "ingest/boolean",
+            "ingest/date",
+            "ingest/float32",
+            "ingest/float64",
+            "ingest/int16",
+            "ingest/int32",
+            "ingest/int64",
+            "ingest/large_string",
+            "ingest/string",
+            "ingest/string_view",
+            "ingest/time_us",
+            "ingest/timestamp_us",
+            "ingest/timestamptz_us",
         }
         for name, query in queries.queries.items():
             if name not in compatible:
@@ -262,8 +294,17 @@ class ProxyPostgresqlQuirks(model.DriverQuirks):
         return quirks.split_statement(statement, dialect="postgres")
 
 
-def get_quirks() -> model.DriverQuirks:
-    backend = os.environ.get("ADBC_PROXY_BACKEND", "sqlite")
+def get_quirks(
+    version: str | None = None,
+    *,
+    vendor: str | None = None,
+) -> model.DriverQuirks:
+    del version
+    backend = (
+        vendor.removeprefix("proxy-")
+        if vendor is not None
+        else os.environ.get("ADBC_PROXY_BACKEND", "sqlite")
+    )
     classes = {
         "sqlite": ProxySqliteQuirks,
         "duckdb": ProxyDuckdbQuirks,

@@ -1,4 +1,19 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -472,6 +487,25 @@ else
   unset ADBC_PROXY_DOWNSTREAM_URI || true
 fi
 
+if [[ "$mode" == "serve" ]]; then
+  env_file=${ADBC_PROXY_ENV_FILE:?ADBC_PROXY_ENV_FILE is required in serve mode}
+  env_file_tmp="$env_file.tmp"
+  {
+    printf 'export ADBC_PROXY_DRIVER=%q\n' "$ADBC_PROXY_DRIVER"
+    printf 'export ADBC_PROXY_ENDPOINT=%q\n' "$ADBC_PROXY_ENDPOINT"
+    printf 'export ADBC_PROXY_TOKEN=%q\n' "$ADBC_PROXY_TOKEN"
+    printf 'export ADBC_PROXY_TARGET=%q\n' "$ADBC_PROXY_TARGET"
+    printf 'export ADBC_PROXY_BACKEND=%q\n' "$ADBC_PROXY_BACKEND"
+    printf 'export ADBC_PROXY_TRANSPORT=%q\n' "$ADBC_PROXY_TRANSPORT"
+    if [[ -n "${ADBC_PROXY_DOWNSTREAM_URI:-}" ]]; then
+      printf 'export ADBC_PROXY_DOWNSTREAM_URI=%q\n' "$ADBC_PROXY_DOWNSTREAM_URI"
+    fi
+  } >"$env_file_tmp"
+  mv "$env_file_tmp" "$env_file"
+  wait "$server_pid"
+  exit $?
+fi
+
 case "$mode" in
   example)
     uv run --project "$validation_root" --python 3.13 \
@@ -483,7 +517,7 @@ case "$mode" in
     ;;
   foundry)
     uv run --project "$validation_root" --python 3.13 --extra foundry \
-      pytest "$validation_root/foundry/tests" "$@"
+      pytest "$validation_root/tests" "$@"
     ;;
   load)
     uv run --project "$validation_root" --python 3.13 \
@@ -494,7 +528,7 @@ case "$mode" in
       python "$validation_root/large_payload.py" "$@"
     ;;
   *)
-    echo "Usage: $0 [example|smoke|foundry|load|large-payload] [sqlite|duckdb|postgresql|mysql|flightsql|datafusion|trino|mssql] [arguments...]" >&2
+    echo "Usage: $0 [example|smoke|foundry|load|large-payload|serve] [sqlite|duckdb|postgresql|mysql|flightsql|datafusion|trino|mssql] [arguments...]" >&2
     exit 2
     ;;
 esac

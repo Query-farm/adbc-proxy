@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """C-ABI smoke test using the external Python ADBC driver manager."""
 
 from __future__ import annotations
@@ -49,9 +64,9 @@ def main() -> None:
         rejected_options = {
             "driver": str(proxy_driver),
             "entrypoint": "AdbcDriverProxyInit",
-            "adbc.proxy.uri": endpoint,
-            "adbc.proxy.target": target,
-            "adbc.proxy.auth.bearer_token": f"{token}-invalid",
+            "proxy.uri": endpoint,
+            "proxy.target": target,
+            "proxy.auth.bearer_token": f"{token}-invalid",
         }
         if downstream_uri := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
             rejected_options["uri"] = downstream_uri
@@ -70,20 +85,20 @@ def main() -> None:
     options = {
         "driver": str(proxy_driver),
         "entrypoint": "AdbcDriverProxyInit",
-        "adbc.proxy.uri": endpoint,
-        "adbc.proxy.target": target,
+        "proxy.uri": endpoint,
+        "proxy.target": target,
     }
     if token:
-        options["adbc.proxy.auth.bearer_token"] = token
+        options["proxy.auth.bearer_token"] = token
     if downstream_uri := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
         options["uri"] = downstream_uri
     if direct := os.environ.get("ADBC_PROXY_IROH_DIRECT_ADDRESS"):
-        options["adbc.proxy.iroh.direct_address"] = direct
+        options["proxy.iroh.direct_address"] = direct
     tls_options = {
-        "ADBC_PROXY_TLS_CA": "adbc.proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "adbc.proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "adbc.proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "adbc.proxy.tls.server_name",
+        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
+        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
+        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
+        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
     }
     for environment, option in tls_options.items():
         if value := os.environ.get(environment):
@@ -97,8 +112,7 @@ def main() -> None:
             denied_connection = adbc_driver_manager.AdbcConnection(denied_database)
         except adbc_driver_manager.Error as error:
             assert (
-                error.status_code
-                == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
+                error.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
             )
             assert "proxy.validation.disallowed" in str(error)
             assert "must-not-reach-driver" not in str(error)
@@ -124,7 +138,9 @@ def main() -> None:
                 assert "proxy.validation.disallowed" in str(error)
                 assert "must-not-reach-driver" not in str(error)
             else:
-                raise AssertionError("the service accepted a disallowed connection option")
+                raise AssertionError(
+                    "the service accepted a disallowed connection option"
+                )
 
             if backend in {"mysql", "flightsql", "datafusion", "trino", "mssql"}:
                 statement = adbc_driver_manager.AdbcStatement(connection)
@@ -142,7 +158,9 @@ def main() -> None:
                     except adbc_driver_manager.Error:
                         pass
                     else:
-                        raise AssertionError("a downstream query error was not propagated")
+                        raise AssertionError(
+                            "a downstream query error was not propagated"
+                        )
                 finally:
                     statement.close()
                 print(

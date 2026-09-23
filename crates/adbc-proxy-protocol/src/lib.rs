@@ -1,3 +1,18 @@
+// Copyright (c) 2026 ADBC Drivers Contributors
+// Copyright (c) 2026 Query Farm LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! Versioned Arrow schemas and wire values for ADBC-over-VGI.
 
 use std::collections::HashMap;
@@ -34,7 +49,7 @@ pub const MAX_CONFIGURABLE_BIND_BYTES: usize = if usize::BITS >= 64 {
 };
 
 /// Per-turn metadata marking successful end-of-input for a bind exchange.
-pub const BIND_FINISH_METADATA_KEY: &str = "adbc.proxy.bind_finish";
+pub const BIND_FINISH_METADATA_KEY: &str = "PROXY:bind_finish";
 
 pub mod method {
     pub const OPEN_CONNECTION: &str = "open_connection";

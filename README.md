@@ -20,14 +20,15 @@ service owns the downstream database connection, statements, transactions,
 and [Apache Arrow](https://arrow.apache.org/) result streams. The wire protocol
 runs on [VGI-RPC](https://vgi-rpc.query.farm/).
 
-```text
-ADBC application
-    -> libadbc_driver_proxy
-    -> VGI-RPC over HTTP(S), TCP, mTLS, or Iroh
-    -> adbc-proxy-server
-    -> server-installed ADBC driver
-    -> database
-```
+## Architecture
+
+<p align="center">
+  <img src=".github/assets/architecture.svg" alt="ADBC applications use the client-side proxy driver to reach the stateful proxy service over VGI-RPC; the service authenticates callers and connects through server-installed ADBC drivers to downstream databases.">
+</p>
+
+The client remains an ordinary ADBC application. The proxy service owns every
+stateful downstream object and selects a server-installed driver from the
+authorized target configuration.
 
 The project is pre-release. Build the client driver and server from source;
 published binary packages are not available yet.

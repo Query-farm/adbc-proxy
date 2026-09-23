@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">ADBC Proxy architecture</title>
+  <desc id="desc">An ADBC application loads the client-side proxy driver, communicates over VGI-RPC using HTTP, TCP with mutual TLS, or Iroh, and reaches the stateful proxy service. The service authenticates and authorizes the caller, owns ADBC connection state, and uses the server-side driver manager to connect to SQLite, DuckDB, PostgreSQL, or another configured ADBC driver.</desc>
+
+  <style>
+    .canvas { fill: #fbfaf7; }
+    .panel { fill: #ffffff; stroke: #d8cdbd; }
+    .box { fill: #f7f2e9; stroke: #c9b99f; }
+    .box-blue { fill: #e9f7fc; stroke: #00a4e4; }
+    .box-green { fill: #edf5ef; stroke: #5d8467; }
+    .box-gold { fill: #fff6df; stroke: #d9a441; }
+    .chip { fill: #ffffff; stroke: #c9b99f; }
+    .title { fill: #211a12; font-family: sans-serif; font-size: 25px; font-weight: 700; }
+    .panel-title { fill: #7d5714; font-family: sans-serif; font-size: 17px; font-weight: 700; letter-spacing: 0.6px; }
+    .label { fill: #211a12; font-family: sans-serif; font-size: 17px; font-weight: 700; }
+    .body { fill: #51463a; font-family: sans-serif; font-size: 14px; }
+    .small { fill: #6f6254; font-family: sans-serif; font-size: 12px; }
+    .mono { fill: #51463a; font-family: monospace; font-size: 12px; }
+    .flow { fill: none; stroke: #a9762e; stroke-width: 3; stroke-linecap: round; }
+    .inner-flow { fill: none; stroke: #8b7a66; stroke-width: 2; stroke-linecap: round; }
+    .divider { stroke: #d8cdbd; stroke-width: 1; }
+
+    @media (prefers-color-scheme: dark) {
+      .canvas { fill: #17130f; }
+      .panel { fill: #211a12; stroke: #594a3a; }
+      .box { fill: #2c241c; stroke: #6c5a47; }
+      .box-blue { fill: #132a32; stroke: #35b8e8; }
+      .box-green { fill: #1d2b21; stroke: #7cab87; }
+      .box-gold { fill: #332918; stroke: #d9a441; }
+      .chip { fill: #2c241c; stroke: #6c5a47; }
+      .title, .label { fill: #f4ece0; }
+      .panel-title { fill: #f0c877; }
+      .body, .mono { fill: #ddd1c1; }
+      .small { fill: #c0b19f; }
+      .divider { stroke: #594a3a; }
+      .inner-flow { stroke: #a99782; }
+    }
+  </style>
+
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#211a12" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a9762e"/>
+    </marker>
+    <marker id="inner-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b7a66"/>
+    </marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="620" rx="20"/>
+  <text class="title" x="600" y="42" text-anchor="middle">One ADBC interface, server-side driver choice</text>
+
+  <!-- Client environment -->
+  <g filter="url(#shadow)">
+    <rect class="panel" x="40" y="75" width="250" height="485" rx="18" stroke-width="2"/>
+  </g>
+  <text class="panel-title" x="165" y="108" text-anchor="middle">CLIENT ENVIRONMENT</text>
+
+  <rect class="box" x="70" y="140" width="190" height="105" rx="12" stroke-width="2"/>
+  <circle cx="96" cy="168" r="14" fill="#f0c877"/>
+  <text x="96" y="173" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#211a12">1</text>
+  <text class="label" x="180" y="174" text-anchor="middle">ADBC application</text>
+  <text class="body" x="165" y="201" text-anchor="middle">Python · C/C++ · Java · Go</text>
+  <text class="small" x="165" y="224" text-anchor="middle">Uses the standard ADBC API</text>
+
+  <path class="inner-flow" d="M 165 245 L 165 300" marker-end="url(#inner-arrow)"/>
+  <text class="small" x="178" y="279">loads</text>
+
+  <rect class="box-blue" x="70" y="305" width="190" height="135" rx="12" stroke-width="2"/>
+  <circle cx="96" cy="333" r="14" fill="#00a4e4"/>
+  <text x="96" y="338" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#ffffff">2</text>
+  <text class="label" x="165" y="339" text-anchor="middle">Proxy driver</text>
+  <text class="mono" x="165" y="369" text-anchor="middle">libadbc_driver_proxy</text>
+  <line class="divider" x1="92" y1="388" x2="238" y2="388"/>
+  <text class="small" x="165" y="413" text-anchor="middle">ADBC 1.1 · Arrow streams</text>
+
+  <rect class="chip" x="72" y="485" width="186" height="42" rx="21"/>
+  <text class="small" x="165" y="511" text-anchor="middle">No downstream driver needed</text>
+
+  <!-- Network transport -->
+  <g filter="url(#shadow)">
+    <rect class="panel" x="350" y="140" width="220" height="355" rx="18" stroke-width="2"/>
+  </g>
+  <text class="panel-title" x="460" y="176" text-anchor="middle">VGI-RPC</text>
+  <text class="small" x="460" y="198" text-anchor="middle">native Arrow record batches</text>
+
+  <rect class="box-gold" x="385" y="225" width="150" height="52" rx="12" stroke-width="2"/>
+  <text class="label" x="460" y="257" text-anchor="middle">HTTP(S)</text>
+
+  <rect class="box-gold" x="385" y="297" width="150" height="52" rx="12" stroke-width="2"/>
+  <text class="label" x="460" y="329" text-anchor="middle">TCP · mTLS</text>
+
+  <rect class="box-gold" x="385" y="369" width="150" height="52" rx="12" stroke-width="2"/>
+  <text class="label" x="460" y="401" text-anchor="middle">Iroh · QUIC</text>
+
+  <text class="small" x="460" y="458" text-anchor="middle">request / response + streaming</text>
+
+  <path class="flow" d="M 290 318 L 350 318" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path class="flow" d="M 570 318 L 630 318" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <!-- Proxy service host -->
+  <g filter="url(#shadow)">
+    <rect class="panel" x="630" y="75" width="530" height="485" rx="18" stroke-width="2"/>
+  </g>
+  <text class="panel-title" x="895" y="108" text-anchor="middle">PROXY SERVICE HOST</text>
+
+  <rect class="box-green" x="665" y="130" width="460" height="90" rx="12" stroke-width="2"/>
+  <circle cx="694" cy="158" r="14" fill="#5d8467"/>
+  <text x="694" y="163" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#ffffff">3</text>
+  <text class="label" x="895" y="163" text-anchor="middle">Authenticated proxy service</text>
+  <text class="body" x="895" y="190" text-anchor="middle">identity · target policy · quotas · OpenTelemetry</text>
+
+  <path class="inner-flow" d="M 895 220 L 895 246" marker-end="url(#inner-arrow)"/>
+
+  <rect class="box" x="665" y="250" width="460" height="82" rx="12" stroke-width="2"/>
+  <text class="label" x="895" y="280" text-anchor="middle">Stateful ADBC ownership</text>
+  <text class="body" x="895" y="307" text-anchor="middle">connections · transactions · statements · result cursors</text>
+
+  <path class="inner-flow" d="M 895 332 L 895 358" marker-end="url(#inner-arrow)"/>
+
+  <rect class="box-blue" x="745" y="362" width="300" height="62" rx="12" stroke-width="2"/>
+  <circle cx="774" cy="393" r="14" fill="#00a4e4"/>
+  <text x="774" y="398" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#ffffff">4</text>
+  <text class="label" x="895" y="399" text-anchor="middle">ADBC driver manager</text>
+
+  <path class="inner-flow" d="M 895 424 L 895 448 M 735 448 L 1055 448 M 735 448 L 735 464 M 895 448 L 895 464 M 1055 448 L 1055 464"/>
+
+  <rect class="box" x="675" y="464" width="120" height="55" rx="10" stroke-width="2"/>
+  <text class="label" x="735" y="497" text-anchor="middle">SQLite</text>
+  <rect class="box" x="835" y="464" width="120" height="55" rx="10" stroke-width="2"/>
+  <text class="label" x="895" y="497" text-anchor="middle">DuckDB</text>
+  <rect class="box" x="995" y="464" width="120" height="55" rx="10" stroke-width="2"/>
+  <text class="label" x="1055" y="489" text-anchor="middle">PostgreSQL</text>
+  <text class="small" x="1055" y="507" text-anchor="middle">or any ADBC driver</text>
+
+  <text class="small" x="895" y="545" text-anchor="middle">Downstream drivers and credentials remain on the server</text>
+
+  <!-- Query.Farm color signature -->
+  <rect x="40" y="588" width="280" height="5" rx="2.5" fill="#f0c877"/>
+  <rect x="320" y="588" width="280" height="5" rx="2.5" fill="#d9a441"/>
+  <rect x="600" y="588" width="280" height="5" rx="2.5" fill="#a9762e"/>
+  <rect x="880" y="588" width="280" height="5" rx="2.5" fill="#7a5230"/>
+</svg>

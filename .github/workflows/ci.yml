@@ -32,12 +32,14 @@ jobs:
     name: Rust quality gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.97.1
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all --check
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -86,17 +88,19 @@ jobs:
       ADBC_POSTGRESQL_URI: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       ADBC_PROXY_TRANSPORT: ${{ matrix.transport }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.97.1
-      - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: 0.11.7
           enable-cache: true
       - run: uv python install 3.13
-      - uses: columnar-tech/setup-dbc@v1
+      - uses: columnar-tech/setup-dbc@ef4bdac93f5792831ebebe3fa2d848a040558caa # v1
         with:
           version: v0.3.0
           drivers: ${{ matrix.driver }}
@@ -128,7 +132,7 @@ jobs:
           --junitxml=validation/foundry-results.xml
       - name: Upload Foundry results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: foundry-results-${{ matrix.backend }}-${{ matrix.transport }}
           path: validation/foundry-results.xml
@@ -185,17 +189,19 @@ jobs:
       ADBC_TRINO_USERNAME: trino
       ADBC_MSSQL_URI: sqlserver://sa:Adbc_Test_Pass123@127.0.0.1:1433
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.97.1
-      - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: 0.11.7
           enable-cache: true
       - run: uv python install 3.13
-      - uses: columnar-tech/setup-dbc@v1
+      - uses: columnar-tech/setup-dbc@ef4bdac93f5792831ebebe3fa2d848a040558caa # v1
         with:
           version: v0.3.0
           drivers: mysql=0.4.0,flightsql=1.9.0,datafusion=0.25.0,trino=0.4.0,mssql=1.4.1

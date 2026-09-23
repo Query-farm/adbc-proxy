@@ -182,7 +182,13 @@ impl From<&AdbcError> for WireAdbcError {
             status: status_name(error.status).to_string(),
             message: error.message.clone(),
             vendor_code: error.vendor_code,
-            sqlstate: error.sqlstate.to_vec(),
+            // ADBC exposes SQLSTATE as C `char`, whose signedness varies by
+            // target. The wire format is stable `i8`, so convert explicitly.
+            sqlstate: error
+                .sqlstate
+                .iter()
+                .map(|value| i8::from_ne_bytes(value.to_ne_bytes()))
+                .collect(),
             details: error
                 .details
                 .as_deref()
@@ -203,7 +209,7 @@ impl WireAdbcError {
     pub fn into_adbc(self) -> AdbcError {
         let mut sqlstate = [0 as std::os::raw::c_char; 5];
         for (destination, source) in sqlstate.iter_mut().zip(self.sqlstate) {
-            *destination = source as std::os::raw::c_char;
+            *destination = std::os::raw::c_char::from_ne_bytes(source.to_ne_bytes());
         }
         let details = self
             .details
@@ -580,5 +586,24 @@ mod tests {
         let encoded = encode_options(&options).unwrap();
         let decoded = decode_options(&encoded).unwrap();
         assert_eq!(decoded.len(), 3);
+    }
+
+    #[test]
+    fn adbc_error_sqlstate_round_trips_across_c_char_signedness() {
+        let source = *b"HY008";
+        let error = AdbcError {
+            message: "cancelled".into(),
+            status: Status::Cancelled,
+            vendor_code: 42,
+            sqlstate: source.map(|value| std::os::raw::c_char::from_ne_bytes([value])),
+            details: None,
+        };
+
+        let wire = WireAdbcError::from(&error);
+        assert_eq!(wire.sqlstate, vec![72, 89, 48, 48, 56]);
+
+        let decoded = wire.into_adbc();
+        assert_eq!(decoded.status, Status::Cancelled);
+        assert_eq!(decoded.sqlstate, error.sqlstate);
     }
 }

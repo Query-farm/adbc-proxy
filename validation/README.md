@@ -116,6 +116,11 @@ client/server policy:
 - `ADBC_PROXY_SERVER_MAX_BIND_BYTES`
 - `ADBC_PROXY_VALIDATION_MAX_REQUEST_BODY_BYTES`
 - `ADBC_PROXY_VALIDATION_REQUEST_TIMEOUT_SECONDS`
+- `ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS`
+- `ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION`
+
+For Iroh load profiles, allow at least one control stream per session plus one
+stream per concurrent result or bind exchange.
 
 HTTP-only `--wire-faults` covers oversized/truncated bodies, caller
 disconnect, timeout response, and recovery. Heavy cases are opt-in because

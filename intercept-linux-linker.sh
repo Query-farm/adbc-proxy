@@ -17,13 +17,26 @@
 set -euo pipefail
 
 args=("$@")
+output=""
 for index in "${!args[@]}"; do
-  if [[ "${args[$index]}" == -Wl,--version-script=* ]]; then
-    version_script="${args[$index]#*=}"
-    scratch=$(mktemp)
-    grep -v 'blake3_' "$version_script" >"$scratch" || true
-    mv "$scratch" "$version_script"
+  if [[ "${args[$index]}" == -o ]] && ((index + 1 < ${#args[@]})); then
+    output="${args[$((index + 1))]}"
+    break
   fi
 done
+
+# The AArch64 blake3 implementation contributes public C symbols to a cdylib.
+# Filter those only from our exported ADBC driver. Rewriting version scripts
+# for dependency dylibs can leave an empty `global` block, which GNU ld rejects.
+if [[ "$output" == */libadbc_driver_proxy.so ]]; then
+  for index in "${!args[@]}"; do
+    if [[ "${args[$index]}" == -Wl,--version-script=* ]]; then
+      version_script="${args[$index]#*=}"
+      scratch=$(mktemp)
+      grep -v 'blake3_' "$version_script" >"$scratch" || true
+      mv "$scratch" "$version_script"
+    fi
+  done
+fi
 
 exec cc "$@"

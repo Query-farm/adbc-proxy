@@ -55,6 +55,10 @@ max_results_per_session = 64
 # secret_key_file = "/run/secrets/iroh-secret-key"
 # endpoint_info_file = "/run/adbc-proxy/iroh-endpoint.json"
 # disable_relays = false
+# A session keeps one control stream and can temporarily use a second stream
+# for Arrow results or bind data. Size these with the session quotas above.
+# max_active_streams = 1024
+# max_active_streams_per_connection = 64
 #
 # [iroh.principals]
 # "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" = "developer@example.com"

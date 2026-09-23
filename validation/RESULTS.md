@@ -199,6 +199,27 @@ runs completed with zero errors: DuckDB/HTTP ran 160 queries across 16 sessions
 (p95 131.7 ms, peak RSS 42.1 MiB). These small runs are regression evidence,
 not replacements for the larger capacity profiles above.
 
+An AArch64 EC2 validation host (48 vCPUs, 92 GiB RAM) then ran the same fixed
+workload against the release build and VGI 0.27.1 candidate. Every run below
+completed without an application error:
+
+| Backend | Transport | Sessions | Queries | Arrow data | Queries/s | p95 | p99 | Peak proxy RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| SQLite | HTTP | 32 | 1,600 | 437.5 MiB | 1,022 | 33 ms | 34 ms | 182 MiB |
+| DuckDB | HTTP | 32 | 1,600 | 437.5 MiB | 3,400 | 9 ms | 13 ms | 1,034 MiB |
+| PostgreSQL 14 | HTTP | 32 | 1,600 | 437.5 MiB | 1,123 | 33 ms | 39 ms | 201 MiB |
+| DuckDB | TCP | 32 | 1,600 | 437.5 MiB | 604 | 53 ms | 54 ms | 1,072 MiB |
+| DuckDB | mTLS | 32 | 1,600 | 437.5 MiB | 605 | 53 ms | 54 ms | 1,117 MiB |
+| DuckDB | Iroh | 64 | 3,200 | 875.0 MiB | 610 | 143 ms | 166 ms | 1,697 MiB |
+
+The Iroh run initially exposed that a pooled ADBC session needs one persistent
+control stream and one additional stream while results or bind data flow. The
+old 32-stream VGI default therefore saturated below 32 concurrent queries.
+The proxy now exposes global and per-connection Iroh stream admission limits,
+defaults the per-connection limit to 64 to match its 32-session-per-principal
+default, and was revalidated at 64 sessions with the limit set to 256. These
+figures are single-host regression evidence, not public capacity guarantees.
+
 ## Payload boundaries and fault injection
 
 On 2026-09-23 the exported driver and SQLite 1.12 were exercised over HTTP,

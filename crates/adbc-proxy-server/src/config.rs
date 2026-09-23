@@ -71,6 +71,22 @@ pub struct IrohConfig {
     pub principals: HashMap<String, String>,
     #[serde(default)]
     pub disable_relays: bool,
+    /// Total logical VGI streams admitted across all Iroh connections.
+    #[serde(default = "default_iroh_max_active_streams")]
+    pub max_active_streams: usize,
+    /// Logical VGI streams admitted on one pooled Iroh connection. Each live
+    /// ADBC session uses a control stream and may use a second result or bind
+    /// stream while Arrow data is flowing.
+    #[serde(default = "default_iroh_max_active_streams_per_connection")]
+    pub max_active_streams_per_connection: usize,
+}
+
+const fn default_iroh_max_active_streams() -> usize {
+    1024
+}
+
+const fn default_iroh_max_active_streams_per_connection() -> usize {
+    64
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -325,6 +341,15 @@ impl Config {
                     "authenticated Iroh requires at least one endpoint-to-principal mapping".into(),
                 );
             }
+            if iroh.max_active_streams == 0
+                || iroh.max_active_streams_per_connection == 0
+                || iroh.max_active_streams_per_connection > iroh.max_active_streams
+            {
+                return Err(
+                    "Iroh stream limits must be positive and the per-connection limit must not exceed the global limit"
+                        .into(),
+                );
+            }
             for (endpoint, principal) in &iroh.principals {
                 if endpoint.len() != 64
                     || !endpoint
@@ -566,7 +591,15 @@ driver = "adbc_driver_sqlite"
         let mapped_iroh = format!(
             "[iroh]\nissuer = \"example.org\"\nsecret_key_file = \"iroh.key\"\n\n[iroh.principals]\n\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" = \"alice\"\n\n[auth.static_bearer_tokens]\ntoken = \"alice\"\n{TARGET}"
         );
-        assert!(Config::from_toml(&mapped_iroh).is_ok());
+        let mapped = Config::from_toml(&mapped_iroh).unwrap();
+        let iroh = mapped.iroh.unwrap();
+        assert_eq!(iroh.max_active_streams, 1024);
+        assert_eq!(iroh.max_active_streams_per_connection, 64);
+
+        let invalid_stream_limits = format!(
+            "[server]\nrequire_authentication = false\n\n[iroh]\nissuer = \"example.org\"\nsecret_key_file = \"iroh.key\"\nmax_active_streams = 32\nmax_active_streams_per_connection = 64\n{TARGET}"
+        );
+        assert!(Config::from_toml(&invalid_stream_limits).is_err());
     }
 
     #[test]

@@ -18,6 +18,18 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 validation_root="$repo_root/validation"
+python_cmd=${ADBC_PROXY_VALIDATION_PYTHON:-}
+if [[ -z "$python_cmd" ]]; then
+  if command -v python3.13 >/dev/null 2>&1; then
+    python_cmd=python3.13
+  else
+    python_cmd=python3
+  fi
+fi
+if ! "$python_cmd" -c 'import tomllib' >/dev/null 2>&1; then
+  echo "Validation setup requires Python 3.11+ (set ADBC_PROXY_VALIDATION_PYTHON)" >&2
+  exit 2
+fi
 token="adbc-proxy-validation-token"
 transport=${ADBC_PROXY_TRANSPORT:-http}
 case "$transport" in
@@ -79,7 +91,7 @@ case "$backend" in
   mssql) downstream_driver=${ADBC_MSSQL_DRIVER:-} ;;
 esac
 if [[ -z "$downstream_driver" ]]; then
-  downstream_driver=$(VALIDATION_BACKEND="$backend" python3 - <<'PY'
+  downstream_driver=$(VALIDATION_BACKEND="$backend" "$python_cmd" - <<'PY'
 import os
 import platform
 import tomllib
@@ -132,6 +144,7 @@ work_dir=$(mktemp -d "${TMPDIR:-/tmp}/adbc-proxy-validation.XXXXXX")
 server_pid=""
 postgres_data=""
 cleanup() {
+  status=$?
   if [[ -n "$server_pid" ]]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
@@ -139,18 +152,23 @@ cleanup() {
   if [[ -n "$postgres_data" ]]; then
     pg_ctl -D "$postgres_data" -m immediate -w stop >/dev/null 2>&1 || true
   fi
+  if [[ "$status" -ne 0 && -f "$work_dir/server.log" ]]; then
+    echo "Proxy server log (last 240 lines):" >&2
+    tail -n 240 "$work_dir/server.log" >&2
+  fi
   rm -rf "$work_dir"
+  return "$status"
 }
 trap cleanup EXIT INT TERM
 
-port=$(python3 - <<'PY'
+port=$("$python_cmd" - <<'PY'
 import socket
 with socket.socket() as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
 )
-tcp_port=$(python3 - <<'PY'
+tcp_port=$("$python_cmd" - <<'PY'
 import socket
 with socket.socket() as sock:
     sock.bind(("127.0.0.1", 0))
@@ -168,7 +186,7 @@ tls_server_cert="$work_dir/tls-server.pem"
 tls_server_key="$work_dir/tls-server-key.pem"
 tls_client_cert="$work_dir/tls-client.pem"
 tls_client_key="$work_dir/tls-client-key.pem"
-python3 - <<'PY' >"$iroh_secret"
+"$python_cmd" - <<'PY' >"$iroh_secret"
 import secrets
 print(secrets.token_hex(32))
 PY
@@ -224,7 +242,7 @@ case "$backend" in
         exit 2
       fi
       postgres_data="$work_dir/postgres"
-      postgres_port=$(python3 - <<'PY'
+      postgres_port=$("$python_cmd" - <<'PY'
 import socket
 with socket.socket() as sock:
     sock.bind(("127.0.0.1", 0))
@@ -272,6 +290,8 @@ VALIDATION_TOKEN="$token" \
 VALIDATION_TRANSPORT="$transport" \
 VALIDATION_IROH_SECRET="$iroh_secret" \
 VALIDATION_IROH_INFO="$iroh_info" \
+VALIDATION_IROH_MAX_ACTIVE_STREAMS="${ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS:-1024}" \
+VALIDATION_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION="${ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION:-64}" \
 VALIDATION_TLS_CA="$tls_ca" \
 VALIDATION_TLS_SERVER_CERT="$tls_server_cert" \
 VALIDATION_TLS_SERVER_KEY="$tls_server_key" \
@@ -284,7 +304,7 @@ VALIDATION_FLIGHTSQL_USERNAME="${ADBC_FLIGHTSQL_USERNAME:-sqlflite_username}" \
 VALIDATION_FLIGHTSQL_PASSWORD="${ADBC_FLIGHTSQL_PASSWORD:-flight_password}" \
 VALIDATION_TRINO_USERNAME="${ADBC_TRINO_USERNAME:-trino}" \
 VALIDATION_MODE="$mode" \
-python3 - <<'PY'
+"$python_cmd" - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -351,6 +371,8 @@ issuer = "validation"
 secret_key_file = {quoted(os.environ["VALIDATION_IROH_SECRET"])}
 endpoint_info_file = {quoted(os.environ["VALIDATION_IROH_INFO"])}
 disable_relays = true
+max_active_streams = {int(os.environ["VALIDATION_IROH_MAX_ACTIVE_STREAMS"])}
+max_active_streams_per_connection = {int(os.environ["VALIDATION_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION"])}
 '''
 
 entrypoint = os.environ["VALIDATION_ENTRYPOINT"]
@@ -405,7 +427,7 @@ Path(os.environ["VALIDATION_CONFIG"]).write_text(contents)
 PY
 
 OTEL_SDK_DISABLED=true \
-RUST_LOG="adbc_proxy_server=info" \
+RUST_LOG="${RUST_LOG:-adbc_proxy_server=info}" \
 "$repo_root/target/release/adbc-proxy-server" --config "$config" \
   >"$work_dir/server.log" 2>&1 &
 server_pid=$!
@@ -453,14 +475,14 @@ case "$transport" in
       sed -n '1,240p' "$work_dir/server.log" >&2
       exit 1
     fi
-    endpoint=$(python3 - "$iroh_info" <<'PY'
+    endpoint=$("$python_cmd" - "$iroh_info" <<'PY'
 import json
 import sys
 record = json.load(open(sys.argv[1]))
 print(f'iroh://{record["endpoint_id"]}')
 PY
 )
-    iroh_direct_address=$(python3 - "$iroh_info" <<'PY'
+    iroh_direct_address=$("$python_cmd" - "$iroh_info" <<'PY'
 import json
 import sys
 record = json.load(open(sys.argv[1]))

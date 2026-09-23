@@ -181,6 +181,14 @@ The server reads a TOML configuration file. See
 [`adbc-proxy.example.toml`](adbc-proxy.example.toml) for all resource limits
 and transport sections.
 
+Iroh clients pool a physical QUIC connection and allocate one VGI control
+stream per live ADBC session, plus a temporary stream while a result or bind
+exchange is active. The Iroh `max_active_streams` and
+`max_active_streams_per_connection` settings therefore need to be sized
+alongside the server session quotas. Their defaults are 1,024 globally and 64
+per connection, which accommodate the default 32 sessions per principal even
+when every session is transferring Arrow data.
+
 Each target names an ADBC driver known to the server's ADBC driver manager and
 may inject database or connection options. Server-configured options are
 immutable: a caller receives `INVALID_ARGUMENT` if it tries to supply or later

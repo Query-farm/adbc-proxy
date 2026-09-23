@@ -313,7 +313,9 @@ async fn start_iroh_listener(
         server,
         IrohServerOptions::default()
             .with_issuer(config.issuer)
-            .with_policy(policy),
+            .with_policy(policy)
+            .with_max_active_streams(config.max_active_streams)
+            .with_max_active_streams_per_connection(config.max_active_streams_per_connection),
     );
     Ok(tokio::spawn(async move {
         iroh_server.serve(endpoint, shutdown).await

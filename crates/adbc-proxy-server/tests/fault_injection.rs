@@ -554,7 +554,9 @@ fn wire_error(error: vgi_rpc::RpcError) -> protocol::WireAdbcError {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stream_cancel_reclaims_only_the_result_and_abandonment_uses_lease_cleanup() {
     let state = Arc::new(FaultState::default());
-    let manager = manager(Arc::clone(&state), Duration::from_millis(30), false);
+    // Leave enough wall-clock headroom for TCP setup and a contended CI host;
+    // the behavior under test is lease cleanup, not a 30 ms timing deadline.
+    let manager = manager(Arc::clone(&state), Duration::from_secs(1), false);
     let (session_id, statement_id) = open_session(&manager, "\0anonymous");
     let session = manager.get(&session_id, "\0anonymous").unwrap();
     let (result_id, _) = session
@@ -610,7 +612,7 @@ async fn stream_cancel_reclaims_only_the_result_and_abandonment_uses_lease_clean
     .await
     .unwrap();
     assert_eq!(manager.resource_counts().unwrap().results, 1);
-    tokio::time::sleep(Duration::from_millis(45)).await;
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
     assert_eq!(manager.reap_expired().unwrap(), 1);
     assert_eq!(
         manager.resource_counts().unwrap(),

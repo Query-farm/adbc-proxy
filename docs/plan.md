@@ -54,18 +54,17 @@ Status: complete.
 
 ### M2: complete ADBC 1.1 surface
 
-Status: substantially complete for the ADBC 1.1 Rust traits and validated
-through the exported C ABI. Bind-stream is currently bounded buffering rather
-than native VGI exchange; database cancellation depends on downstream support.
+Status: complete for the ADBC 1.1 Rust traits and validated through the
+exported C ABI. Database cancellation still depends on downstream support.
 
 - Typed database, connection, and statement option get/set.
-- Bind and bind-stream with independently enforced configurable client/server
-  budgets (64 MiB default) and pre-allocation rejection.
+- Native VGI bind and bind-stream exchanges with independently enforced
+  configurable client/server budgets (64 MiB default).
 - Metadata: info, objects, table schema/types, statistics.
 - Execute schema, execute partitions, and read partition.
 - Substrait plans and rich error details.
 - External smoke and ADBC Driver Foundry connection/query/statement suites.
-- Remaining: Apache C++ `c/validation` fixture and native VGI bind exchange.
+- Remaining: Apache C++ `c/validation` fixture.
 
 ### M3: service hardening
 
@@ -93,15 +92,15 @@ Status: TCP/mTLS and Iroh complete.
 
 ### M5: native VGI data plane and worker isolation
 
-Status: designed; HTTP query results already use the target producer model.
+Status: complete for native streaming and thread isolation.
 
-- Replace TCP/mTLS/Iroh `READ_RESULT_BATCH` nesting with VGI producers that
+- TCP/mTLS/Iroh VGI producers
   emit downstream `RecordBatch` values directly.
-- Replace nested-IPC bind/bind-stream with runtime-schema VGI exchanges,
+- Runtime-schema VGI bind/bind-stream exchanges,
   bounded channel backpressure, explicit finish, and structured final errors.
-- Add owned/dedicated VGI stream leases: pooled QUIC streams for Iroh and a
+- Owned/dedicated VGI stream leases: pooled QUIC streams for Iroh and a
   bounded dedicated-connection strategy for TCP/mTLS.
-- Move each downstream session behind a bounded worker/actor so transport
+- Each downstream session is behind a bounded worker/actor so transport
   deadlines can respond independently and cancellation does not queue behind
   a blocking driver call.
 - Use a worker process boundary when hard termination of a hung or hostile

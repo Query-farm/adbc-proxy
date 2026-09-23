@@ -8,7 +8,8 @@ transaction, and result-stream state.
 
 The wire protocol is defined as typed VGI-RPC methods over Arrow IPC. The
 driver and service support HTTP(S), persistent TCP, mutual-TLS TCP, and raw
-stateful Iroh transports.
+stateful Iroh transports. Protocol 0.2 is intentionally incompatible with the
+earlier nested-IPC prototype; client and server versions must match.
 
 The current build is a single-worker production candidate. It implements the
 ADBC 1.1 connection and statement surface, explicit remote handle lifecycle,
@@ -22,9 +23,9 @@ Database results are not treated as an endless push stream. A downstream ADBC
 `execute` returns a pull-based Arrow stream. The proxy keeps that cursor on its
 owning worker and advances it only when the client asks for the next batch.
 Over HTTP, VGI continuation tokens turn each pull into a new request and carry
-native Arrow batches. The version-0.1 TCP/mTLS/Iroh path still uses a
-sequence-numbered unary pull with nested IPC. That compatibility path is being
-replaced by native VGI producer streams; see
+native Arrow batches. TCP, mTLS, and Iroh use the same native VGI producer;
+each active byte-stream result owns a dedicated logical stream. Bind and
+bind-stream likewise use runtime-schema native VGI exchanges; see
 [the data-plane migration](docs/native-streaming.md).
 
 ## Workspace
@@ -99,7 +100,7 @@ options:
 - `adbc.proxy.auth.bearer_token`: HTTP(S) bearer token
 - `adbc.proxy.request_timeout_ms`: positive per-RPC client timeout
 - `adbc.proxy.max_response_bytes`: HTTP encoded/decoded response budget
-- `adbc.proxy.max_bind_bytes`: client-side encoded bind budget, default 64 MiB
+- `adbc.proxy.max_bind_bytes`: client-side cumulative bind budget, default 64 MiB
 - `adbc.proxy.tls.ca`, `.cert`, `.key`, and `.server_name`: mTLS files and
   verified server name for `tls+tcp://`
 - `adbc.proxy.iroh.secret_key`: optional stable client endpoint secret
@@ -141,13 +142,15 @@ identity, remote endpoint, direct address, and timeout share one authenticated
 physical connection while each ADBC connection receives an independent VGI
 stream.
 
-This is suitable for a bounded single-process deployment. It is not
+This is suitable for a bounded single-process deployment. Each downstream
+session runs behind a bounded actor with independent cancellation handles and
+an operation deadline. It is not
 yet a transparent multi-replica service: live sessions are process-local and
 need ingress affinity, native drivers share the service process, and worker
-loss invalidates transactions. Parameter streams still use the version-0.1
-nested-IPC path; its independently enforced client/server budget defaults to
-64 MiB and is configurable, but large binds should wait for native VGI
-exchange streaming. A transport timeout cannot preempt a synchronous or hung
-native driver call, and database-level cancellation depends on downstream
-support. See
+loss invalidates transactions. A timed-out driver call is isolated to its
+session actor and may continue until its ADBC cancellation handle succeeds or
+the process is terminated; Rust cannot safely kill a thread executing foreign
+code. See
 [security and resource controls](docs/security.md) before deployment.
+Drivers that require a hard deadline should use the
+[process-isolation profile](docs/process-isolation.md).

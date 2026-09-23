@@ -48,29 +48,32 @@ contains an entry, unlisted principals are denied all targets. A literal `*`
 target grants all targets. Session ownership checks continue to prevent one
 authorized principal from using another principal's connection handles.
 
-The server enforces independent limits on decoded HTTP request size, encoded
-bind data, request duration, global sessions, sessions per principal, and
-statements and results per session. `server.max_bind_bytes` defaults to 64 MiB;
-the client has a separate `adbc.proxy.max_bind_bytes` defence. The HTTP request
-budget must reserve at least 1 MiB beyond the bind budget for the VGI envelope.
-Raising these limits is supported but increases peak memory while version 0.1
-buffers nested bind IPC. The current monolithic protocol cannot exceed a
-single Arrow `Binary` value; native VGI exchange streaming is the planned
-large-data path.
+The server enforces independent limits on each decoded HTTP request, the
+cumulative native bind stream, request duration, global sessions, sessions per
+principal, and statements and results per session. `server.max_bind_bytes`
+defaults to 64 MiB; the client has a separate `adbc.proxy.max_bind_bytes`
+defence. Bind batches are acknowledged one turn at a time and staged in an
+anonymous file, so raising the cumulative limit does not require buffering the
+whole stream in memory. The HTTP request budget remains a per-batch limit.
 
 Opening calls reserve quota before loading a downstream connection, so
 concurrent opens cannot exceed the configured bounds. A background reaper
 removes expired idle leases but does not reap a session held by an in-flight
-operation. Graceful SIGTERM/Ctrl-C shutdown detaches all sessions and drops
-idle driver resources. An operation already in flight keeps its reference and
-is allowed to finish during Axum's graceful drain.
+operation. Graceful SIGTERM/Ctrl-C shutdown detaches and cancels all sessions,
+then drains listeners for at most `server.shutdown_grace_seconds` before
+detaching remaining work.
 
-A client or HTTP transport timeout does not itself cancel an ADBC operation.
-VGI's current synchronous HTTP dispatch cannot preempt a blocking native
-driver callback. Best-effort statement and connection cancellation use their
-independent ADBC cancel handles, but a driver may ignore them. Enforceable
-deadlines require per-session worker isolation; hard termination of a stuck
-FFI call requires a worker process boundary.
+A client transport timeout, VGI stream cancellation, and the server's
+`driver_operation_timeout_seconds` deadline are distinct. Keep the driver
+deadline below `request_timeout_seconds` when clients should receive a
+structured ADBC `TIMEOUT`. Downstream work runs on a bounded per-session actor;
+expiration does not block the transport worker. Best-effort
+statement and connection cancellation bypass the actor through independent
+ADBC cancel handles. A driver may ignore cancellation, so hard termination of
+a stuck FFI call still requires a process boundary. The production isolation
+profile is one proxy worker process per failure domain (driver/tenant), with
+the supervisor enforcing its own kill deadline; process death invalidates the
+worker's stateful sessions and transactions.
 
 Unauthenticated `GET /healthz` and `GET /readyz` probes return 204 after the
 process and complete RPC/authentication configuration have initialized. VGI's

@@ -1,6 +1,6 @@
 # Validation results
 
-Last run: 2026-09-22 on macOS 15.6.1 arm64.
+Last run: 2026-09-23 on macOS 15.6.1 arm64.
 
 ## Versions
 
@@ -164,6 +164,13 @@ process, while PostgreSQL executes separately. The raw reports are in
 [`load-results`](load-results/). Multi-hour soak, remote-network runs, and
 hundreds-of-session testing remain outstanding.
 
+After the protocol 0.2 native-stream/session-actor migration, short regression
+runs completed with zero errors: DuckDB/HTTP ran 160 queries across 16 sessions
+(p95 9.3 ms, peak RSS 120.3 MiB), PostgreSQL/HTTP ran 80 across 8 sessions
+(p95 13.3 ms, peak RSS 35.5 MiB), and SQLite/Iroh ran 80 across 8 sessions
+(p95 131.7 ms, peak RSS 42.1 MiB). These small runs are regression evidence,
+not replacements for the larger capacity profiles above.
+
 ## Payload boundaries and fault injection
 
 On 2026-09-23 the exported driver and SQLite 1.12 were exercised over HTTP,
@@ -174,37 +181,38 @@ confirming the HTTP response option does not constrain byte transports.
 
 An HTTP run using the normal 256 MiB response budget accepted a payload 64 KiB
 below the limit and rejected payloads at and 64 KiB above it; the exactly
-256 MiB value encoded to 268,436,872 bytes. A real bind/bind-stream run accepted
-raw payloads 4 KiB below 64 MiB and rejected raw payloads at and above 64 MiB
-because their encoded Arrow streams exceeded the inner cap. With 1 MiB of
-outer request headroom, a raw payload 512 bytes below 64 MiB remained reachable
-over HTTP.
+256 MiB value encoded to 268,436,872 bytes. Those response results remain
+applicable because query results were already native VGI producer batches.
 
-Overridden 256 KiB client/server bind budgets passed below/at/above boundary
-tests for both bind APIs. With a 512 KiB client budget and 256 KiB server
-budget, the server independently rejected the 262,600-byte encoded payload.
+After the native VGI exchange migration, overridden 256 KiB client/server bind
+budgets again passed below/at/above boundary tests for both bind APIs over
+HTTP, TCP, and Iroh. Below-limit native batches were accepted, at/above-limit
+batches were rejected by the independent client guard, and every connection
+remained usable. Multi-batch bind-stream was separately exercised over HTTP,
+TCP, mTLS, and Iroh in the Rust transport integration suite.
 Raw HTTP probes returned 413 for an oversized/truncated body and 408 at the
 configured two-second request timeout; disconnect and every rejection were
 followed by a successful query.
 
-After eliminating retained raw IPC cloning, the heavy HTTP process rose from
-8.4 MiB RSS to 282.9 MiB after near-cap binds and 288.7 MiB after bind-stream,
-settling at 243.6 MiB after one second. This is materially below the earlier
-581 MiB high-water result, but allocator/downstream retention still requires a
-longer memory-pressure soak. The roughly 4 GiB VGI Rust implementation guard
-and roughly 2 GiB monolithic Arrow `Binary` boundary were not allocated or
-tested. Bulk inputs and byte-transport results remain scheduled for migration
-to native VGI exchange/producer streams.
+The prior nested-IPC heavy run reached a 288.7 MiB high-water mark and is now a
+historical baseline, not the current wire architecture. Native bind exchanges
+stage batches incrementally to anonymous files with one-turn backpressure; the
+old monolithic Arrow `Binary` ceiling no longer applies to a complete bind
+stream. Individual VGI messages remain subject to the VGI implementation and
+transport request limits. A new multi-hour native-stream memory soak remains
+useful follow-up work.
 
-Seven deterministic server fault tests cover producer cancellation, ADBC
+Nine deterministic server fault tests cover producer cancellation, ADBC
 statement/connection cancellation, downstream `NOT_IMPLEMENTED`, principal
 isolation, caller timeout, abandoned-stream lease cleanup, malformed and
 replayed requests, terminal reader errors, structured error fields, in-flight
 lease protection, shutdown cleanup, and quota reuse. They found and fixed
 non-replay-stable terminal reader errors and idle reaping of active sessions.
-They also confirmed that the current synchronous VGI HTTP dispatch cannot
-preempt a blocking ADBC callback; worker/process isolation remains required for
-enforceable termination.
+Per-session bounded actors now keep blocking callbacks off RPC dispatch
+threads, discard timed-out queued work before execution, and expose ADBC
+`TIMEOUT` independently from explicit cancellation. Cancellation handles bypass
+the actor, and shutdown tests verify that timed-out native work is detached
+without joining it. Hard termination remains the process supervisor's role.
 
 ## Apache C++ validation library
 

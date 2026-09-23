@@ -19,7 +19,7 @@ class ProxySqliteQuirks(model.DriverQuirks):
     driver_name = "ADBC SQLite Driver"
     vendor_name = "SQLite"
     vendor_version = re.compile(r"3\..*")
-    short_version = "0.1.0"
+    short_version = "0.2.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         connection_transactions=True,
@@ -110,7 +110,7 @@ class ProxyDuckdbQuirks(model.DriverQuirks):
     driver_name = "ADBC DuckDB Driver"
     vendor_name = "duckdb"
     vendor_version = re.compile(r"v1\.5\..*")
-    short_version = "0.1.0"
+    short_version = "0.2.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         connection_get_statistics=True,
@@ -170,7 +170,7 @@ class ProxyPostgresqlQuirks(model.DriverQuirks):
     driver_name = "ADBC PostgreSQL Driver"
     vendor_name = "PostgreSQL"
     vendor_version = re.compile(r"14.*")
-    short_version = "0.1.0"
+    short_version = "0.2.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         connection_get_statistics=True,

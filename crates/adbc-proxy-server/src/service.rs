@@ -4,15 +4,76 @@ use std::sync::Arc;
 use adbc_core::error::Error as AdbcError;
 use adbc_core::options::{InfoCode, ObjectDepth, OptionValue};
 use adbc_proxy_protocol as protocol;
-use arrow_array::{
-    BinaryArray, BooleanArray, Int64Array, RecordBatch, RecordBatchIterator, StringArray,
-};
+use arrow_array::{BinaryArray, BooleanArray, Int64Array, RecordBatch, StringArray};
 use serde::{Deserialize, Serialize};
 use vgi_rpc::server::{MethodInfo, MethodType, RpcServer, StateDecoder};
-use vgi_rpc::stream::{OutputCollector, ProducerState, StreamResult, StreamStateKind};
+use vgi_rpc::stream::{
+    ExchangeState, OutputCollector, ProducerState, StreamResult, StreamStateKind,
+};
 use vgi_rpc::{CallContext, Request, RpcError};
 
-use crate::session::SessionManager;
+use crate::session::{BindMode, SessionManager};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BindCursor {
+    session_id: String,
+    upload_id: String,
+}
+
+struct BindExchange {
+    manager: Arc<SessionManager>,
+    cursor: BindCursor,
+}
+
+impl ExchangeState for BindExchange {
+    fn exchange(
+        &mut self,
+        input: &RecordBatch,
+        out: &mut OutputCollector,
+        ctx: &CallContext,
+    ) -> vgi_rpc::Result<()> {
+        let principal = self.manager.principal(&ctx.auth)?;
+        let session = self
+            .manager
+            .get(&self.cursor.session_id, &principal)
+            .map_err(adbc_rpc_error)?;
+        if ctx
+            .tick_metadata(protocol::BIND_FINISH_METADATA_KEY)
+            .is_some()
+        {
+            if input.num_rows() != 0 {
+                return Err(RpcError::value_error(
+                    "bind finish turn must contain a zero-row batch",
+                ));
+            }
+            session
+                .finish_bind_upload(&self.cursor.upload_id)
+                .map_err(adbc_rpc_error)?;
+            out.emit(ok_batch()?)?;
+            out.finish();
+        } else {
+            if let Err(error) = session.push_bind_upload(&self.cursor.upload_id, input.clone()) {
+                session.cancel_bind_upload(&self.cursor.upload_id);
+                return Err(adbc_rpc_error(error));
+            }
+            out.emit(ok_batch()?)?;
+        }
+        Ok(())
+    }
+
+    fn on_cancel(&mut self, ctx: &CallContext) {
+        if let Ok(principal) = self.manager.principal(&ctx.auth)
+            && let Ok(session) = self.manager.get(&self.cursor.session_id, &principal)
+        {
+            session.cancel_bind_upload(&self.cursor.upload_id);
+        }
+    }
+
+    fn encode_state(&self) -> vgi_rpc::Result<Vec<u8>> {
+        serde_json::to_vec(&self.cursor)
+            .map_err(|error| RpcError::runtime_error(format!("encode bind cursor: {error}")))
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ResultCursor {
@@ -33,13 +94,8 @@ impl ProducerState for ResultProducer {
             .manager
             .get(&self.cursor.session_id, &principal)
             .map_err(adbc_rpc_error)?;
-        let result = session
-            .result(&self.cursor.result_id)
-            .map_err(adbc_rpc_error)?;
-        let batch = result
-            .lock()
-            .map_err(|_| RpcError::runtime_error("result is poisoned"))?
-            .next(self.cursor.sequence)
+        let batch = session
+            .next_result(&self.cursor.result_id, self.cursor.sequence)
             .map_err(adbc_rpc_error)?;
         match batch {
             Some(batch) => {
@@ -234,10 +290,10 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
         protocol::empty_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&set_manager, request, ctx)?;
-            let key = string(request, "key")?;
+            let key = string(request, "key")?.to_string();
             let value = decode_option_value(string(request, "value_json")?)?;
             session
-                .with_connection(|connection| connection.set_option(key, value))
+                .with_connection(move |connection| connection.set_option(&key, value))
                 .map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },
@@ -250,14 +306,14 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
         protocol::value_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&get_manager, request, ctx)?;
-            let key = string(request, "key")?;
-            let value_type = string(request, "value_type")?;
+            let key = string(request, "key")?.to_string();
+            let value_type = string(request, "value_type")?.to_string();
             let value = session
-                .with_connection(|connection| match value_type {
-                    "string" => connection.get_option_string(key).map(OptionValue::String),
-                    "bytes" => connection.get_option_bytes(key).map(OptionValue::Bytes),
-                    "int" => connection.get_option_int(key).map(OptionValue::Int),
-                    "double" => connection.get_option_double(key).map(OptionValue::Double),
+                .with_connection(move |connection| match value_type.as_str() {
+                    "string" => connection.get_option_string(&key).map(OptionValue::String),
+                    "bytes" => connection.get_option_bytes(&key).map(OptionValue::Bytes),
+                    "int" => connection.get_option_int(&key).map(OptionValue::Int),
+                    "double" => connection.get_option_double(&key).map(OptionValue::Double),
                     _ => Err(AdbcError::with_message_and_status(
                         "unknown option value type",
                         adbc_core::error::Status::InvalidArguments,
@@ -283,7 +339,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
                     .collect::<HashSet<_>>()
             });
             let reader = session
-                .with_connection(|connection| connection.get_info(codes))
+                .with_connection(move |connection| connection.get_info(codes))
                 .map_err(adbc_rpc_error)?;
             Ok(Some(insert_reader_response(&session, reader)?))
         },
@@ -298,12 +354,12 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
             let (session, _) = get_session(&objects_manager, request, ctx)?;
             let args: ObjectsArgs = json_args(request)?;
             let depth = ObjectDepth::try_from(args.depth).map_err(adbc_rpc_error)?;
-            let table_type = args
-                .table_type
-                .as_ref()
-                .map(|values| values.iter().map(String::as_str).collect());
             let reader = session
-                .with_connection(|connection| {
+                .with_connection(move |connection| {
+                    let table_type = args
+                        .table_type
+                        .as_ref()
+                        .map(|values| values.iter().map(String::as_str).collect());
                     connection.get_objects(
                         depth,
                         args.catalog.as_deref(),
@@ -327,7 +383,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
             let (session, _) = get_session(&table_schema_manager, request, ctx)?;
             let args: TableSchemaArgs = json_args(request)?;
             let schema = session
-                .with_connection(|connection| {
+                .with_connection(move |connection| {
                     connection.get_table_schema(
                         args.catalog.as_deref(),
                         args.db_schema.as_deref(),
@@ -376,7 +432,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
             let (session, _) = get_session(&statistics_manager, request, ctx)?;
             let args: StatisticsArgs = json_args(request)?;
             let reader = session
-                .with_connection(|connection| {
+                .with_connection(move |connection| {
                     connection.get_statistics(
                         args.catalog.as_deref(),
                         args.db_schema.as_deref(),
@@ -396,9 +452,9 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
         protocol::execute_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&partition_manager, request, ctx)?;
-            let partition = binary(request, "payload")?;
+            let partition = binary(request, "payload")?.to_vec();
             let reader = session
-                .with_connection(|connection| connection.read_partition(partition))
+                .with_connection(move |connection| connection.read_partition(&partition))
                 .map_err(adbc_rpc_error)?;
             Ok(Some(insert_reader_response(&session, reader)?))
         },
@@ -417,16 +473,13 @@ fn register_statement_operations(
         protocol::empty_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&set_option_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            let key = string(request, "key")?;
+            let statement_id = string(request, "statement_id")?;
+            let key = string(request, "key")?.to_string();
             let value = decode_option_value(string(request, "value_json")?)?;
-            statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .set_option(key, value)
+            session
+                .with_statement(statement_id, move |statement| {
+                    statement.set_option(&key, value)
+                })
                 .map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },
@@ -439,26 +492,21 @@ fn register_statement_operations(
         protocol::value_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&get_option_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
+            let statement_id = string(request, "statement_id")?;
+            let key = string(request, "key")?.to_string();
+            let value_type = string(request, "value_type")?.to_string();
+            let value = session
+                .with_statement(statement_id, move |statement| match value_type.as_str() {
+                    "string" => statement.get_option_string(&key).map(OptionValue::String),
+                    "bytes" => statement.get_option_bytes(&key).map(OptionValue::Bytes),
+                    "int" => statement.get_option_int(&key).map(OptionValue::Int),
+                    "double" => statement.get_option_double(&key).map(OptionValue::Double),
+                    _ => Err(AdbcError::with_message_and_status(
+                        "unknown option value type",
+                        adbc_core::error::Status::InvalidArguments,
+                    )),
+                })
                 .map_err(adbc_rpc_error)?;
-            let key = string(request, "key")?;
-            let value_type = string(request, "value_type")?;
-            let statement = statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?;
-            let value = match value_type {
-                "string" => statement.get_option_string(key).map(OptionValue::String),
-                "bytes" => statement.get_option_bytes(key).map(OptionValue::Bytes),
-                "int" => statement.get_option_int(key).map(OptionValue::Int),
-                "double" => statement.get_option_double(key).map(OptionValue::Double),
-                _ => Err(AdbcError::with_message_and_status(
-                    "unknown option value type",
-                    adbc_core::error::Status::InvalidArguments,
-                )),
-            }
-            .map_err(adbc_rpc_error)?;
             Ok(Some(value_response(&value)?))
         },
     ));
@@ -470,14 +518,10 @@ fn register_statement_operations(
         protocol::empty_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&set_sql_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .set_sql_query(string(request, "sql")?)
+            let statement_id = string(request, "statement_id")?;
+            let sql = string(request, "sql")?.to_string();
+            session
+                .with_statement(statement_id, move |statement| statement.set_sql_query(&sql))
                 .map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },
@@ -490,14 +534,12 @@ fn register_statement_operations(
         protocol::empty_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&substrait_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .set_substrait_plan(binary(request, "payload")?)
+            let statement_id = string(request, "statement_id")?;
+            let plan = binary(request, "payload")?.to_vec();
+            session
+                .with_statement(statement_id, move |statement| {
+                    statement.set_substrait_plan(&plan)
+                })
                 .map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },
@@ -510,87 +552,28 @@ fn register_statement_operations(
         protocol::empty_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&prepare_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .prepare()
+            let statement_id = string(request, "statement_id")?;
+            session
+                .with_statement(statement_id, |statement| statement.prepare())
                 .map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },
     ));
 
-    let bind_manager = manager.clone();
-    server.register(MethodInfo::unary(
+    register_bind_exchange(
+        server,
+        manager.clone(),
         protocol::method::BIND,
-        protocol::statement_binary_schema(),
-        protocol::empty_response_schema(),
-        move |request, ctx| {
-            let (session, _) = get_session(&bind_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            let mut reader = protocol::decode_batches_ref_with_limit(
-                binary(request, "payload")?,
-                max_bind_bytes,
-            )
-            .map_err(protocol_rpc_error)?;
-            let batch = reader
-                .next()
-                .ok_or(protocol::ProtocolError::EmptyStream)
-                .map_err(protocol_rpc_error)?
-                .map_err(arrow_rpc_error)?;
-            if reader.next().is_some() {
-                return Err(RpcError::value_error(
-                    "bind payload must contain exactly one record batch",
-                ));
-            }
-            statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .bind(batch)
-                .map_err(adbc_rpc_error)?;
-            Ok(Some(ok_batch()?))
-        },
-    ));
-
-    let bind_stream_manager = manager.clone();
-    server.register(MethodInfo::unary(
+        BindMode::Batch,
+        max_bind_bytes,
+    );
+    register_bind_exchange(
+        server,
+        manager.clone(),
         protocol::method::BIND_STREAM,
-        protocol::statement_binary_schema(),
-        protocol::empty_response_schema(),
-        move |request, ctx| {
-            let (session, _) = get_session(&bind_stream_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            // An ADBC implementation may retain a bind-stream reader after
-            // this handler returns, so it must be owned. Decode eagerly from
-            // the borrowed request bytes, then retain only the decoded Arrow
-            // arrays rather than cloning and retaining the entire IPC payload.
-            let reader = protocol::decode_batches_ref_with_limit(
-                binary(request, "payload")?,
-                max_bind_bytes,
-            )
-            .map_err(protocol_rpc_error)?;
-            let schema = reader.schema();
-            let batches = reader
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(arrow_rpc_error)?;
-            let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), schema);
-            statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .bind_stream(Box::new(reader))
-                .map_err(adbc_rpc_error)?;
-            Ok(Some(ok_batch()?))
-        },
-    ));
+        BindMode::Stream,
+        max_bind_bytes,
+    );
 
     let cancel_manager = manager.clone();
     server.register(MethodInfo::unary(
@@ -599,10 +582,9 @@ fn register_statement_operations(
         protocol::empty_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&cancel_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
+            session
+                .cancel_statement(string(request, "statement_id")?)
                 .map_err(adbc_rpc_error)?;
-            statement.cancel.try_cancel().map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },
     ));
@@ -618,12 +600,8 @@ fn register_statement_operations(
             session
                 .invalidate_statement_results(&statement_id)
                 .map_err(adbc_rpc_error)?;
-            let statement = session.statement(&statement_id).map_err(adbc_rpc_error)?;
-            let reader = statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .execute()
+            let reader = session
+                .with_statement(&statement_id, |statement| statement.execute())
                 .map_err(adbc_rpc_error)?;
             let (result_id, schema) = session
                 .insert_statement_result(&statement_id, reader)
@@ -642,16 +620,12 @@ fn register_statement_operations(
         protocol::update_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&update_manager, request, ctx)?;
-            let statement_id = string(request, "statement_id")?;
+            let statement_id = string(request, "statement_id")?.to_string();
             session
-                .invalidate_statement_results(statement_id)
+                .invalidate_statement_results(&statement_id)
                 .map_err(adbc_rpc_error)?;
-            let statement = session.statement(statement_id).map_err(adbc_rpc_error)?;
-            let affected = statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .execute_update()
+            let affected = session
+                .with_statement(&statement_id, |statement| statement.execute_update())
                 .map_err(adbc_rpc_error)?;
             Ok(Some(
                 RecordBatch::try_new(
@@ -670,16 +644,12 @@ fn register_statement_operations(
         protocol::schema_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&schema_manager, request, ctx)?;
-            let statement_id = string(request, "statement_id")?;
+            let statement_id = string(request, "statement_id")?.to_string();
             session
-                .invalidate_statement_results(statement_id)
+                .invalidate_statement_results(&statement_id)
                 .map_err(adbc_rpc_error)?;
-            let statement = session.statement(statement_id).map_err(adbc_rpc_error)?;
-            let schema = statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .execute_schema()
+            let schema = session
+                .with_statement(&statement_id, |statement| statement.execute_schema())
                 .map_err(adbc_rpc_error)?;
             Ok(Some(schema_response(&schema)?))
         },
@@ -692,14 +662,9 @@ fn register_statement_operations(
         protocol::schema_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&parameter_schema_manager, request, ctx)?;
-            let statement = session
-                .statement(string(request, "statement_id")?)
-                .map_err(adbc_rpc_error)?;
-            let schema = statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .get_parameter_schema()
+            let statement_id = string(request, "statement_id")?;
+            let schema = session
+                .with_statement(statement_id, |statement| statement.get_parameter_schema())
                 .map_err(adbc_rpc_error)?;
             Ok(Some(schema_response(&schema)?))
         },
@@ -712,16 +677,12 @@ fn register_statement_operations(
         protocol::partitions_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&partitions_manager, request, ctx)?;
-            let statement_id = string(request, "statement_id")?;
+            let statement_id = string(request, "statement_id")?.to_string();
             session
-                .invalidate_statement_results(statement_id)
+                .invalidate_statement_results(&statement_id)
                 .map_err(adbc_rpc_error)?;
-            let statement = session.statement(statement_id).map_err(adbc_rpc_error)?;
-            let result = statement
-                .statement
-                .lock()
-                .map_err(|_| RpcError::runtime_error("statement is poisoned"))?
-                .execute_partitions()
+            let result = session
+                .with_statement(&statement_id, |statement| statement.execute_partitions())
                 .map_err(adbc_rpc_error)?;
             let schema = protocol::encode_schema(&result.schema).map_err(protocol_rpc_error)?;
             let partitions = serde_json::to_string(&result.partitions)
@@ -770,40 +731,6 @@ fn register_result_operations(server: &mut RpcServer, manager: Arc<SessionManage
         },
     ));
 
-    let batch_manager = manager.clone();
-    server.register(MethodInfo::unary(
-        protocol::method::READ_RESULT_BATCH,
-        protocol::read_result_schema(),
-        protocol::read_result_batch_response_schema(),
-        move |request, ctx| {
-            let (session, _) = get_session(&batch_manager, request, ctx)?;
-            let result_id = string(request, "result_id")?;
-            let sequence =
-                protocol::int64_value(&request.batch, "sequence").map_err(protocol_rpc_error)?;
-            let result = session.result(result_id).map_err(adbc_rpc_error)?;
-            let batch = result
-                .lock()
-                .map_err(|_| RpcError::runtime_error("result is poisoned"))?
-                .next(sequence)
-                .map_err(adbc_rpc_error)?;
-            let payload = batch
-                .as_ref()
-                .map(protocol::encode_result_batch)
-                .transpose()
-                .map_err(protocol_rpc_error)?;
-            Ok(Some(
-                RecordBatch::try_new(
-                    protocol::read_result_batch_response_schema(),
-                    vec![
-                        Arc::new(BooleanArray::from(vec![batch.is_none()])),
-                        Arc::new(BinaryArray::from(vec![payload.as_deref()])),
-                    ],
-                )
-                .map_err(arrow_rpc_error)?,
-            ))
-        },
-    ));
-
     let handler_manager = manager.clone();
     let decoder_manager = manager;
     let decoder: StateDecoder = Arc::new(move |bytes: &[u8]| {
@@ -824,11 +751,7 @@ fn register_result_operations(server: &mut RpcServer, manager: Arc<SessionManage
                 let result_id = string(request, "result_id")?.to_string();
                 let sequence = protocol::int64_value(&request.batch, "sequence")
                     .map_err(protocol_rpc_error)?;
-                let result = session.result(&result_id).map_err(adbc_rpc_error)?;
-                let schema = result
-                    .lock()
-                    .map_err(|_| RpcError::runtime_error("result is poisoned"))?
-                    .schema();
+                let schema = session.result_schema(&result_id).map_err(adbc_rpc_error)?;
                 Ok(StreamResult::producer(
                     schema,
                     Box::new(ResultProducer {
@@ -837,6 +760,53 @@ fn register_result_operations(server: &mut RpcServer, manager: Arc<SessionManage
                             session_id,
                             result_id,
                             sequence,
+                        },
+                    }),
+                ))
+            },
+        )
+        .with_state_decoder(decoder),
+    );
+}
+
+fn register_bind_exchange(
+    server: &mut RpcServer,
+    manager: Arc<SessionManager>,
+    method: &'static str,
+    mode: BindMode,
+    max_bind_bytes: usize,
+) {
+    let handler_manager = manager.clone();
+    let decoder_manager = manager;
+    let decoder: StateDecoder = Arc::new(move |bytes: &[u8]| {
+        let cursor: BindCursor = serde_json::from_slice(bytes)
+            .map_err(|error| RpcError::protocol_error(format!("decode bind cursor: {error}")))?;
+        Ok(StreamStateKind::Exchange(Box::new(BindExchange {
+            manager: decoder_manager.clone(),
+            cursor,
+        })))
+    });
+    server.register(
+        MethodInfo::stream(
+            method,
+            MethodType::Exchange,
+            protocol::bind_init_schema(),
+            move |request, ctx| {
+                let (session, session_id) = get_session(&handler_manager, request, ctx)?;
+                let statement_id = string(request, "statement_id")?;
+                let schema = protocol::decode_schema(binary(request, "schema_ipc")?)
+                    .map_err(protocol_rpc_error)?;
+                let upload_id = session
+                    .start_bind_upload(statement_id, mode, Arc::new(schema.clone()), max_bind_bytes)
+                    .map_err(adbc_rpc_error)?;
+                Ok(StreamResult::exchange(
+                    protocol::empty_response_schema(),
+                    Arc::new(schema),
+                    Box::new(BindExchange {
+                        manager: handler_manager.clone(),
+                        cursor: BindCursor {
+                            session_id,
+                            upload_id,
                         },
                     }),
                 ))

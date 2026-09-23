@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use adbc_core::CancelHandle;
@@ -9,6 +12,7 @@ use arrow_schema::SchemaRef;
 use uuid::Uuid;
 
 use crate::backend::{Backend, BackendConnection, BackendStatement};
+use crate::bind_upload::BindUpload;
 use crate::config::TargetConfig;
 
 #[derive(Clone, Copy, Debug)]
@@ -88,6 +92,8 @@ pub struct SessionManager {
     require_authentication: bool,
     limits: SessionLimits,
     authorizer: TargetAuthorizer,
+    operation_timeout: Duration,
+    closing: AtomicBool,
 }
 
 #[derive(Default)]
@@ -101,11 +107,84 @@ pub struct Session {
     principal: String,
     target: String,
     last_used: Mutex<Instant>,
-    connection: Mutex<Box<dyn BackendConnection>>,
+    resources: Arc<SessionResources>,
+    worker: SessionWorker,
     connection_cancel: Arc<dyn CancelHandle>,
+    bind_uploads: Mutex<HashMap<String, BindUploadEntry>>,
+    limits: SessionLimits,
+}
+
+struct SessionResources {
+    connection: Mutex<Box<dyn BackendConnection>>,
     statements: Mutex<HashMap<String, Arc<StatementEntry>>>,
     results: Mutex<HashMap<String, Arc<Mutex<ResultEntry>>>>,
-    limits: SessionLimits,
+}
+
+type WorkerJob = Box<dyn FnOnce() + Send + 'static>;
+
+struct SessionWorker {
+    tx: SyncSender<WorkerJob>,
+    timeout: Duration,
+}
+
+impl SessionWorker {
+    fn start(timeout: Duration) -> Result<Self, AdbcError> {
+        let (tx, rx) = mpsc::sync_channel::<WorkerJob>(32);
+        thread::Builder::new()
+            .name("adbc-proxy-session".to_string())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    job();
+                }
+            })
+            .map_err(|error| internal(format!("start session worker: {error}")))?;
+        Ok(Self { tx, timeout })
+    }
+
+    fn call<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce() -> Result<T, AdbcError> + Send + 'static,
+    ) -> Result<T, AdbcError> {
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let job_abandoned = Arc::clone(&abandoned);
+        let job = Box::new(move || {
+            if job_abandoned.load(Ordering::Acquire) {
+                return;
+            }
+            let _ = reply_tx.send(operation());
+        });
+        match self.tx.try_send(job) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return Err(busy("session worker queue is full")),
+            Err(TrySendError::Disconnected(_)) => {
+                return Err(internal("session worker stopped"));
+            }
+        }
+        match reply_rx.recv_timeout(self.timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                abandoned.store(true, Ordering::Release);
+                Err(timeout(format!(
+                    "downstream operation exceeded {:?}",
+                    self.timeout
+                )))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(internal("session worker stopped")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BindMode {
+    Batch,
+    Stream,
+}
+
+struct BindUploadEntry {
+    statement_id: String,
+    mode: BindMode,
+    upload: BindUpload,
 }
 
 pub struct StatementEntry {
@@ -128,6 +207,7 @@ pub struct ResourceCounts {
     pub sessions: usize,
     pub statements: usize,
     pub results: usize,
+    pub bind_uploads: usize,
     pub opening_sessions: usize,
 }
 
@@ -159,7 +239,28 @@ impl SessionManager {
         limits: SessionLimits,
         authorizer: TargetAuthorizer,
     ) -> Self {
+        Self::with_limits_authorizer_and_timeout(
+            backend,
+            targets,
+            ttl,
+            require_authentication,
+            limits,
+            authorizer,
+            Duration::from_secs(300),
+        )
+    }
+
+    pub fn with_limits_authorizer_and_timeout(
+        backend: Arc<dyn Backend>,
+        targets: HashMap<String, TargetConfig>,
+        ttl: Duration,
+        require_authentication: bool,
+        limits: SessionLimits,
+        authorizer: TargetAuthorizer,
+        operation_timeout: Duration,
+    ) -> Self {
         debug_assert!(limits.validate().is_ok());
+        debug_assert!(!operation_timeout.is_zero());
         Self {
             backend,
             targets,
@@ -168,6 +269,8 @@ impl SessionManager {
             require_authentication,
             limits,
             authorizer,
+            operation_timeout,
+            closing: AtomicBool::new(false),
         }
     }
 
@@ -195,46 +298,104 @@ impl SessionManager {
                 Status::Unauthorized,
             ));
         }
-        let target = self.targets.get(target_name).ok_or_else(|| {
+        let target = self.targets.get(target_name).cloned().ok_or_else(|| {
             AdbcError::with_message_and_status("target is not configured", Status::NotFound)
         })?;
 
         self.reserve_open(&principal)?;
-        let connection = self
-            .backend
-            .open(target, database_options, connection_options);
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        let backend = Arc::clone(&self.backend);
+        let spawn = thread::Builder::new()
+            .name("adbc-proxy-open".to_string())
+            .spawn(move || {
+                let result = backend.open(&target, database_options, connection_options);
+                let _ = reply_tx.send(result);
+            });
+        let connection = match spawn {
+            Ok(_) => match reply_rx.recv_timeout(self.operation_timeout) {
+                Ok(result) => result,
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(timeout(format!(
+                    "downstream connection open exceeded {:?}",
+                    self.operation_timeout
+                ))),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    Err(internal("connection open worker stopped"))
+                }
+            },
+            Err(error) => Err(internal(format!("start connection open worker: {error}"))),
+        };
 
+        let connection = match connection {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.release_open_reservation(&principal)?;
+                return Err(error);
+            }
+        };
+        let connection_cancel = connection.cancel_handle();
+        let id = Uuid::new_v4().to_string();
+        let resources = Arc::new(SessionResources {
+            connection: Mutex::new(connection),
+            statements: Mutex::new(HashMap::new()),
+            results: Mutex::new(HashMap::new()),
+        });
+        let worker = match SessionWorker::start(self.operation_timeout) {
+            Ok(worker) => worker,
+            Err(error) => {
+                self.release_open_reservation(&principal)?;
+                let _ = thread::Builder::new()
+                    .name("adbc-proxy-failed-open-cleanup".to_string())
+                    .spawn(move || drop(resources));
+                return Err(error);
+            }
+        };
+        let session = Arc::new(Session {
+            principal: principal.clone(),
+            target: target_name.to_string(),
+            last_used: Mutex::new(Instant::now()),
+            resources,
+            worker,
+            connection_cancel,
+            bind_uploads: Mutex::new(HashMap::new()),
+            limits: self.limits,
+        });
         let mut registry = self
             .registry
             .lock()
             .map_err(|_| internal("session registry is poisoned"))?;
-        registry.opening_total = registry.opening_total.saturating_sub(1);
-        if let Some(opening) = registry.opening_by_principal.get_mut(&principal) {
-            *opening = opening.saturating_sub(1);
-            if *opening == 0 {
-                registry.opening_by_principal.remove(&principal);
-            }
+        Self::release_open_reservation_locked(&mut registry, &principal);
+        if self.closing.load(Ordering::Acquire) {
+            drop(registry);
+            drop(session);
+            return Err(busy("proxy is shutting down"));
         }
-        let connection = connection?;
-        let connection_cancel = connection.cancel_handle();
-        let id = Uuid::new_v4().to_string();
-        registry.sessions.insert(
-            id.clone(),
-            Arc::new(Session {
-                principal,
-                target: target_name.to_string(),
-                last_used: Mutex::new(Instant::now()),
-                connection: Mutex::new(connection),
-                connection_cancel,
-                statements: Mutex::new(HashMap::new()),
-                results: Mutex::new(HashMap::new()),
-                limits: self.limits,
-            }),
-        );
+        registry.sessions.insert(id.clone(), session);
         Ok(id)
     }
 
+    fn release_open_reservation(&self, principal: &str) -> Result<(), AdbcError> {
+        let mut registry = self
+            .registry
+            .lock()
+            .map_err(|_| internal("session registry is poisoned"))?;
+        Self::release_open_reservation_locked(&mut registry, principal);
+        Ok(())
+    }
+
+    fn release_open_reservation_locked(registry: &mut SessionRegistry, principal: &str) {
+        registry.opening_total = registry.opening_total.saturating_sub(1);
+        if let Some(opening) = registry.opening_by_principal.get_mut(principal) {
+            *opening = opening.saturating_sub(1);
+            if *opening == 0 {
+                registry.opening_by_principal.remove(principal);
+            }
+        }
+    }
+
     fn reserve_open(&self, principal: &str) -> Result<(), AdbcError> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err(busy("proxy is shutting down"));
+        }
         // Reaping before admission ensures dead leases do not consume quota
         // until the next background interval.
         self.reap_expired()?;
@@ -242,6 +403,9 @@ impl SessionManager {
             .registry
             .lock()
             .map_err(|_| internal("session registry is poisoned"))?;
+        if self.closing.load(Ordering::Acquire) {
+            return Err(busy("proxy is shutting down"));
+        }
         let total = registry.sessions.len() + registry.opening_total;
         if total >= self.limits.max_sessions {
             return Err(quota("global session"));
@@ -360,6 +524,7 @@ impl SessionManager {
     /// Detach every session during graceful shutdown. Active calls keep their
     /// resources until they return; all idle resources are dropped now.
     pub fn close_all(&self) -> Result<usize, AdbcError> {
+        self.closing.store(true, Ordering::Release);
         let mut registry = self
             .registry
             .lock()
@@ -386,14 +551,21 @@ impl SessionManager {
         };
         for session in registry.sessions.values() {
             counts.statements += session
+                .resources
                 .statements
                 .lock()
                 .map_err(|_| internal("statement registry is poisoned"))?
                 .len();
             counts.results += session
+                .resources
                 .results
                 .lock()
                 .map_err(|_| internal("result registry is poisoned"))?
+                .len();
+            counts.bind_uploads += session
+                .bind_uploads
+                .lock()
+                .map_err(|_| internal("bind upload registry is poisoned"))?
                 .len();
         }
         Ok(counts)
@@ -416,13 +588,19 @@ impl Session {
 
     pub fn with_connection<T>(
         &self,
-        operation: impl FnOnce(&mut dyn BackendConnection) -> Result<T, AdbcError>,
-    ) -> Result<T, AdbcError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| internal("connection is poisoned"))?;
-        operation(connection.as_mut())
+        operation: impl FnOnce(&mut dyn BackendConnection) -> Result<T, AdbcError> + Send + 'static,
+    ) -> Result<T, AdbcError>
+    where
+        T: Send + 'static,
+    {
+        let resources = Arc::clone(&self.resources);
+        self.worker.call(move || {
+            let mut connection = resources
+                .connection
+                .lock()
+                .map_err(|_| internal("connection is poisoned"))?;
+            operation(connection.as_mut())
+        })
     }
 
     pub fn cancel_connection(&self) -> Result<(), AdbcError> {
@@ -430,61 +608,188 @@ impl Session {
     }
 
     pub fn commit(&self) -> Result<(), AdbcError> {
-        self.connection
-            .lock()
-            .map_err(|_| internal("connection is poisoned"))?
-            .commit()
+        self.with_connection(|connection| connection.commit())
     }
 
     pub fn rollback(&self) -> Result<(), AdbcError> {
-        self.connection
-            .lock()
-            .map_err(|_| internal("connection is poisoned"))?
-            .rollback()
+        self.with_connection(|connection| connection.rollback())
     }
 
     pub fn new_statement(&self) -> Result<String, AdbcError> {
-        let mut statements = self
-            .statements
-            .lock()
-            .map_err(|_| internal("statement registry is poisoned"))?;
-        if statements.len() >= self.limits.max_statements_per_session {
-            return Err(quota("statement"));
-        }
-        let statement = self
-            .connection
-            .lock()
-            .map_err(|_| internal("connection is poisoned"))?
-            .new_statement()?;
-        let cancel = statement.cancel_handle();
-        let id = Uuid::new_v4().to_string();
-        statements.insert(
-            id.clone(),
-            Arc::new(StatementEntry {
-                statement: Mutex::new(statement),
-                cancel,
-            }),
-        );
-        Ok(id)
+        let resources = Arc::clone(&self.resources);
+        let limit = self.limits.max_statements_per_session;
+        self.worker.call(move || {
+            let mut statements = resources
+                .statements
+                .lock()
+                .map_err(|_| internal("statement registry is poisoned"))?;
+            if statements.len() >= limit {
+                return Err(quota("statement"));
+            }
+            let statement = resources
+                .connection
+                .lock()
+                .map_err(|_| internal("connection is poisoned"))?
+                .new_statement()?;
+            let cancel = statement.cancel_handle();
+            let id = Uuid::new_v4().to_string();
+            statements.insert(
+                id.clone(),
+                Arc::new(StatementEntry {
+                    statement: Mutex::new(statement),
+                    cancel,
+                }),
+            );
+            Ok(id)
+        })
     }
 
-    pub fn statement(&self, id: &str) -> Result<Arc<StatementEntry>, AdbcError> {
-        self.statements
+    pub fn with_statement<T>(
+        &self,
+        id: &str,
+        operation: impl FnOnce(&mut dyn BackendStatement) -> Result<T, AdbcError> + Send + 'static,
+    ) -> Result<T, AdbcError>
+    where
+        T: Send + 'static,
+    {
+        let resources = Arc::clone(&self.resources);
+        let id = id.to_string();
+        self.worker.call(move || {
+            let statement = resources
+                .statements
+                .lock()
+                .map_err(|_| internal("statement registry is poisoned"))?
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| not_found("statement"))?;
+            let mut statement = statement
+                .statement
+                .lock()
+                .map_err(|_| internal("statement is poisoned"))?;
+            operation(statement.as_mut())
+        })
+    }
+
+    pub fn cancel_statement(&self, id: &str) -> Result<(), AdbcError> {
+        self.resources
+            .statements
             .lock()
             .map_err(|_| internal("statement registry is poisoned"))?
             .get(id)
             .cloned()
-            .ok_or_else(|| not_found("statement"))
+            .ok_or_else(|| not_found("statement"))?
+            .cancel
+            .try_cancel()
     }
 
     pub fn close_statement(&self, id: &str) -> Result<(), AdbcError> {
-        self.statements
+        let resources = Arc::clone(&self.resources);
+        let statement_id = id.to_string();
+        self.worker.call(move || {
+            resources
+                .statements
+                .lock()
+                .map_err(|_| internal("statement registry is poisoned"))?
+                .remove(&statement_id)
+                .ok_or_else(|| not_found("statement"))?;
+            Ok(())
+        })?;
+        self.invalidate_statement_results(id)?;
+        let uploads = {
+            let mut registry = self
+                .bind_uploads
+                .lock()
+                .map_err(|_| internal("bind upload registry is poisoned"))?;
+            let ids = registry
+                .iter()
+                .filter(|(_, entry)| entry.statement_id == id)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            ids.into_iter()
+                .filter_map(|id| registry.remove(&id))
+                .collect::<Vec<_>>()
+        };
+        for entry in uploads {
+            entry.upload.cancel();
+        }
+        Ok(())
+    }
+
+    pub fn start_bind_upload(
+        &self,
+        statement_id: &str,
+        mode: BindMode,
+        schema: SchemaRef,
+        max_bytes: usize,
+    ) -> Result<String, AdbcError> {
+        if !self
+            .resources
+            .statements
             .lock()
             .map_err(|_| internal("statement registry is poisoned"))?
+            .contains_key(statement_id)
+        {
+            return Err(not_found("statement"));
+        }
+        let upload = BindUpload::start(schema, max_bytes)?;
+        let id = Uuid::new_v4().to_string();
+        self.bind_uploads
+            .lock()
+            .map_err(|_| internal("bind upload registry is poisoned"))?
+            .insert(
+                id.clone(),
+                BindUploadEntry {
+                    statement_id: statement_id.to_string(),
+                    mode,
+                    upload,
+                },
+            );
+        Ok(id)
+    }
+
+    pub fn push_bind_upload(&self, id: &str, batch: RecordBatch) -> Result<(), AdbcError> {
+        self.bind_uploads
+            .lock()
+            .map_err(|_| internal("bind upload registry is poisoned"))?
+            .get(id)
+            .ok_or_else(|| not_found("bind upload"))?
+            .upload
+            .push(batch)
+    }
+
+    pub fn finish_bind_upload(&self, id: &str) -> Result<(), AdbcError> {
+        let entry = self
+            .bind_uploads
+            .lock()
+            .map_err(|_| internal("bind upload registry is poisoned"))?
             .remove(id)
-            .ok_or_else(|| not_found("statement"))?;
-        self.invalidate_statement_results(id)?;
-        Ok(())
+            .ok_or_else(|| not_found("bind upload"))?;
+        let mut reader = entry.upload.finish()?;
+        match entry.mode {
+            BindMode::Batch => {
+                let batch = reader
+                    .next()
+                    .ok_or_else(|| invalid_data("bind requires exactly one record batch"))?
+                    .map_err(AdbcError::from)?;
+                if reader.next().is_some() {
+                    return Err(invalid_data("bind requires exactly one record batch"));
+                }
+                self.with_statement(&entry.statement_id, move |statement| statement.bind(batch))
+            }
+            BindMode::Stream => self.with_statement(&entry.statement_id, move |statement| {
+                statement.bind_stream(reader)
+            }),
+        }
+    }
+
+    pub fn cancel_bind_upload(&self, id: &str) {
+        if let Ok(Some(entry)) = self
+            .bind_uploads
+            .lock()
+            .map(|mut uploads| uploads.remove(id))
+        {
+            entry.upload.cancel();
+        }
     }
 
     pub fn insert_result(
@@ -504,16 +809,21 @@ impl Session {
     }
 
     pub fn invalidate_statement_results(&self, statement_id: &str) -> Result<(), AdbcError> {
-        self.results
-            .lock()
-            .map_err(|_| internal("result registry is poisoned"))?
-            .retain(|_, result| {
-                result
-                    .lock()
-                    .map(|entry| entry.owner_statement_id.as_deref() != Some(statement_id))
-                    .unwrap_or(false)
-            });
-        Ok(())
+        let resources = Arc::clone(&self.resources);
+        let statement_id = statement_id.to_string();
+        self.worker.call(move || {
+            resources
+                .results
+                .lock()
+                .map_err(|_| internal("result registry is poisoned"))?
+                .retain(|_, result| {
+                    result
+                        .lock()
+                        .map(|entry| entry.owner_statement_id.as_deref() != Some(&statement_id))
+                        .unwrap_or(false)
+                });
+            Ok(())
+        })
     }
 
     fn insert_owned_result(
@@ -521,46 +831,118 @@ impl Session {
         owner_statement_id: Option<String>,
         reader: Box<dyn RecordBatchReader + Send + 'static>,
     ) -> Result<(String, SchemaRef), AdbcError> {
-        let schema = reader.schema();
-        let id = Uuid::new_v4().to_string();
-        let mut results = self
-            .results
-            .lock()
-            .map_err(|_| internal("result registry is poisoned"))?;
-        if results.len() >= self.limits.max_results_per_session {
-            return Err(quota("result"));
-        }
-        results.insert(
-            id.clone(),
-            Arc::new(Mutex::new(ResultEntry {
-                owner_statement_id,
-                reader,
-                schema: schema.clone(),
-                next_sequence: 0,
-                last: None,
-                terminal_error: None,
-                finished: false,
-            })),
-        );
-        Ok((id, schema))
+        let resources = Arc::clone(&self.resources);
+        let limit = self.limits.max_results_per_session;
+        self.worker.call(move || {
+            let schema = reader.schema();
+            let id = Uuid::new_v4().to_string();
+            let mut results = resources
+                .results
+                .lock()
+                .map_err(|_| internal("result registry is poisoned"))?;
+            if results.len() >= limit {
+                return Err(quota("result"));
+            }
+            results.insert(
+                id.clone(),
+                Arc::new(Mutex::new(ResultEntry {
+                    owner_statement_id,
+                    reader,
+                    schema: schema.clone(),
+                    next_sequence: 0,
+                    last: None,
+                    terminal_error: None,
+                    finished: false,
+                })),
+            );
+            Ok((id, schema))
+        })
     }
 
-    pub fn result(&self, id: &str) -> Result<Arc<Mutex<ResultEntry>>, AdbcError> {
-        self.results
-            .lock()
-            .map_err(|_| internal("result registry is poisoned"))?
-            .get(id)
-            .cloned()
-            .ok_or_else(|| not_found("result"))
+    pub fn result_schema(&self, id: &str) -> Result<SchemaRef, AdbcError> {
+        let resources = Arc::clone(&self.resources);
+        let id = id.to_string();
+        self.worker.call(move || {
+            let result = resources
+                .results
+                .lock()
+                .map_err(|_| internal("result registry is poisoned"))?
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| not_found("result"))?;
+            let schema = result
+                .lock()
+                .map_err(|_| internal("result is poisoned"))?
+                .schema();
+            Ok(schema)
+        })
+    }
+
+    pub fn next_result(&self, id: &str, sequence: i64) -> Result<Option<RecordBatch>, AdbcError> {
+        let resources = Arc::clone(&self.resources);
+        let id = id.to_string();
+        self.worker.call(move || {
+            let result = resources
+                .results
+                .lock()
+                .map_err(|_| internal("result registry is poisoned"))?
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| not_found("result"))?;
+            result
+                .lock()
+                .map_err(|_| internal("result is poisoned"))?
+                .next(sequence)
+        })
     }
 
     pub fn close_result(&self, id: &str) -> Result<(), AdbcError> {
-        self.results
+        let resources = Arc::clone(&self.resources);
+        let id = id.to_string();
+        self.worker.call(move || {
+            resources
+                .results
+                .lock()
+                .map_err(|_| internal("result registry is poisoned"))?
+                .remove(&id)
+                .ok_or_else(|| not_found("result"))?;
+            Ok(())
+        })
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let connection_cancel = Arc::clone(&self.connection_cancel);
+        let resources = Arc::clone(&self.resources);
+        let statement_cancels = self
+            .resources
+            .statements
             .lock()
-            .map_err(|_| internal("result registry is poisoned"))?
-            .remove(id)
-            .ok_or_else(|| not_found("result"))?;
-        Ok(())
+            .map(|statements| {
+                statements
+                    .values()
+                    .map(|statement| Arc::clone(&statement.cancel))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Ok(mut uploads) = self.bind_uploads.lock() {
+            for (_, entry) in uploads.drain() {
+                entry.upload.cancel();
+            }
+        }
+        // Cancellation and native handle destructors are FFI and may block.
+        // Keep both off the registry/shutdown thread; a process supervisor is
+        // the ultimate hard deadline for a driver that ignores cancellation.
+        let _ = thread::Builder::new()
+            .name("adbc-proxy-session-cleanup".to_string())
+            .spawn(move || {
+                let _ = connection_cancel.try_cancel();
+                for cancel in statement_cancels {
+                    let _ = cancel.try_cancel();
+                }
+                drop(resources);
+            });
     }
 }
 
@@ -619,6 +1001,18 @@ fn quota(kind: &str) -> AdbcError {
 
 fn internal(message: impl Into<String>) -> AdbcError {
     AdbcError::with_message_and_status(message, Status::Internal)
+}
+
+fn busy(message: impl Into<String>) -> AdbcError {
+    AdbcError::with_message_and_status(message, Status::InvalidState)
+}
+
+fn timeout(message: impl Into<String>) -> AdbcError {
+    AdbcError::with_message_and_status(message, Status::Timeout)
+}
+
+fn invalid_data(message: impl Into<String>) -> AdbcError {
+    AdbcError::with_message_and_status(message, Status::InvalidData)
 }
 
 fn not_found(kind: &str) -> AdbcError {

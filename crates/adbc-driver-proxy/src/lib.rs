@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use adbc_core::error::{Error, Result, Status};
@@ -17,12 +19,10 @@ use adbc_core::{
     CancelHandle, Connection, Database, Driver, Optionable, PartitionedResult, Statement,
 };
 use adbc_proxy_protocol as protocol;
-use arrow_array::{
-    Array, BinaryArray, BooleanArray, Int64Array, RecordBatch, RecordBatchReader, StringArray,
-};
+use arrow_array::{Array, BinaryArray, Int64Array, RecordBatch, RecordBatchReader, StringArray};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use rustls::pki_types::pem::PemObject;
-use vgi_rpc_client::{HttpClient, RpcClient, RpcError, Transport};
+use vgi_rpc_client::{HttpClient, Metadata, RpcClient, RpcError, Transport};
 
 pub const DRIVER_NAME: &str = "adbc_driver_proxy";
 pub const OPTION_PROXY_URI: &str = "adbc.proxy.uri";
@@ -473,30 +473,25 @@ impl Optionable for ProxyStatement {
 
 impl Statement for ProxyStatement {
     fn bind(&mut self, batch: RecordBatch) -> Result<()> {
-        let bytes = protocol::encode_batches_with_limit(
-            batch.schema().as_ref(),
-            [Ok(batch)],
-            self.remote.max_bind_bytes,
+        let schema = batch.schema();
+        let mut batches = std::iter::once(Ok(batch));
+        self.remote.bind_batches(
+            protocol::method::BIND,
+            &self.statement_id,
+            schema,
+            &mut batches,
         )
-        .map_err(|error| invalid(error.to_string()))?;
-        let request =
-            statement_binary_request(&self.remote.session_id, &self.statement_id, &bytes)?;
-        self.remote.call(protocol::method::BIND, &request)?;
-        Ok(())
     }
 
     fn bind_stream(&mut self, reader: Box<dyn RecordBatchReader + Send>) -> Result<()> {
         let schema = reader.schema();
-        let bytes = protocol::encode_batches_with_limit(
-            schema.as_ref(),
-            reader,
-            self.remote.max_bind_bytes,
+        let mut reader = reader;
+        self.remote.bind_batches(
+            protocol::method::BIND_STREAM,
+            &self.statement_id,
+            schema,
+            &mut reader,
         )
-        .map_err(|error| invalid(error.to_string()))?;
-        let request =
-            statement_binary_request(&self.remote.session_id, &self.statement_id, &bytes)?;
-        self.remote.call(protocol::method::BIND_STREAM, &request)?;
-        Ok(())
     }
 
     fn execute(&mut self) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
@@ -596,7 +591,7 @@ impl CancelHandle for ProxyCancelHandle {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct TransportOptions {
     tls_ca: Option<String>,
     tls_cert: Option<String>,
@@ -629,11 +624,87 @@ struct HttpTransport {
 struct ByteTransport {
     client: Mutex<RpcClient>,
     _iroh_lease: Option<iroh_pool::Lease>,
+    connector: ByteConnector,
+}
+
+#[derive(Clone)]
+struct ByteConnector {
+    endpoint: String,
+    request_timeout: Duration,
+    options: TransportOptions,
+}
+
+impl ByteConnector {
+    fn connect(&self) -> Result<(RpcClient, Option<iroh_pool::Lease>)> {
+        let client = if self.endpoint.starts_with("tcp://") {
+            let (host, port) = host_and_port(&self.endpoint, "tcp")?;
+            RpcClient::tcp_connect_with_timeout(&host, port, Some(self.request_timeout))
+                .map_err(rpc_error)?
+        } else if self.endpoint.starts_with("tls+tcp://") {
+            let (host, port) = host_and_port(&self.endpoint, "tls+tcp")?;
+            tls_tcp_client(&host, port, self.request_timeout, &self.options)?
+        } else if self.endpoint.starts_with("iroh://") {
+            return self.connect_iroh();
+        } else {
+            return Err(not_implemented("unsupported byte-stream proxy URI"));
+        };
+        Ok((configure_rpc_client(client), None))
+    }
+
+    fn connect_iroh(&self) -> Result<(RpcClient, Option<iroh_pool::Lease>)> {
+        let parsed = url::Url::parse(&self.endpoint).map_err(|_| invalid("invalid iroh:// URI"))?;
+        if parsed.scheme() != "iroh"
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.port().is_some()
+            || !matches!(parsed.path(), "" | "/")
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(invalid(
+                "Iroh URI must be iroh://<endpoint-id> without credentials, port, path, query, or fragment",
+            ));
+        }
+        let remote_id = iroh::EndpointId::from_str(
+            parsed
+                .host_str()
+                .ok_or_else(|| invalid("Iroh endpoint ID is required"))?,
+        )
+        .map_err(|error| invalid(format!("invalid Iroh endpoint ID: {error}")))?;
+        let secret_key = self
+            .options
+            .iroh_secret_key
+            .as_ref()
+            .map(|secret| {
+                iroh::SecretKey::from_str(secret.trim())
+                    .map_err(|error| invalid(format!("invalid Iroh client secret key: {error}")))
+            })
+            .transpose()?;
+        let direct_address = self
+            .options
+            .iroh_direct_address
+            .as_ref()
+            .map(|address| {
+                address
+                    .parse()
+                    .map_err(|error| invalid(format!("invalid Iroh direct address: {error}")))
+            })
+            .transpose()?;
+        let pooled = iroh_pool::open_client(iroh_pool::Config {
+            remote_id,
+            direct_address,
+            secret_key,
+            rpc_timeout: self.request_timeout,
+        })
+        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
+        let (client, lease) = pooled.into_parts();
+        Ok((configure_rpc_client(client), Some(lease)))
+    }
 }
 
 enum RemoteTransport {
     Http(HttpTransport),
-    Byte(ByteTransport),
+    Byte(Box<ByteTransport>),
 }
 
 impl RemoteTransport {
@@ -662,77 +733,25 @@ impl RemoteTransport {
             ));
         }
 
-        let client = if endpoint.starts_with("tcp://") {
-            let (host, port) = host_and_port(&endpoint, "tcp")?;
-            RpcClient::tcp_connect_with_timeout(&host, port, Some(request_timeout))
-                .map_err(rpc_error)?
-        } else if endpoint.starts_with("tls+tcp://") {
-            let (host, port) = host_and_port(&endpoint, "tls+tcp")?;
-            tls_tcp_client(&host, port, request_timeout, &options)?
-        } else if endpoint.starts_with("iroh://") {
-            return Self::connect_iroh(endpoint, request_timeout, options);
-        } else {
+        if !endpoint.starts_with("tcp://")
+            && !endpoint.starts_with("tls+tcp://")
+            && !endpoint.starts_with("iroh://")
+        {
             return Err(not_implemented(
                 "proxy URI scheme; supported schemes are http, https, tcp, tls+tcp, and iroh",
             ));
-        };
-        Ok(Self::Byte(ByteTransport {
-            client: Mutex::new(configure_rpc_client(client)),
-            _iroh_lease: None,
-        }))
-    }
-
-    fn connect_iroh(
-        target: String,
-        request_timeout: Duration,
-        options: TransportOptions,
-    ) -> Result<Self> {
-        let parsed = url::Url::parse(&target).map_err(|_| invalid("invalid iroh:// URI"))?;
-        if parsed.scheme() != "iroh"
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.port().is_some()
-            || !matches!(parsed.path(), "" | "/")
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err(invalid(
-                "Iroh URI must be iroh://<endpoint-id> without credentials, port, path, query, or fragment",
-            ));
         }
-        let remote_id = iroh::EndpointId::from_str(
-            parsed
-                .host_str()
-                .ok_or_else(|| invalid("Iroh endpoint ID is required"))?,
-        )
-        .map_err(|error| invalid(format!("invalid Iroh endpoint ID: {error}")))?;
-        let secret_key = options
-            .iroh_secret_key
-            .map(|secret| {
-                iroh::SecretKey::from_str(secret.trim())
-                    .map_err(|error| invalid(format!("invalid Iroh client secret key: {error}")))
-            })
-            .transpose()?;
-        let direct_address = options
-            .iroh_direct_address
-            .map(|address| {
-                address
-                    .parse()
-                    .map_err(|error| invalid(format!("invalid Iroh direct address: {error}")))
-            })
-            .transpose()?;
-        let pooled = iroh_pool::open_client(iroh_pool::Config {
-            remote_id,
-            direct_address,
-            secret_key,
-            rpc_timeout: request_timeout,
-        })
-        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-        let (client, lease) = pooled.into_parts();
-        Ok(Self::Byte(ByteTransport {
-            client: Mutex::new(configure_rpc_client(client)),
-            _iroh_lease: Some(lease),
-        }))
+        let connector = ByteConnector {
+            endpoint,
+            request_timeout,
+            options,
+        };
+        let (client, lease) = connector.connect()?;
+        Ok(Self::Byte(Box::new(ByteTransport {
+            client: Mutex::new(client),
+            _iroh_lease: lease,
+            connector,
+        })))
     }
 
     fn is_http(&self) -> bool {
@@ -832,6 +851,87 @@ impl RemoteConnection {
         self.transport.call(method, request)
     }
 
+    fn bind_batches(
+        &self,
+        method: &str,
+        statement_id: &str,
+        schema: SchemaRef,
+        batches: &mut dyn Iterator<Item = std::result::Result<RecordBatch, ArrowError>>,
+    ) -> Result<()> {
+        let schema_ipc =
+            protocol::encode_schema(schema.as_ref()).map_err(|error| invalid(error.to_string()))?;
+        let init = RecordBatch::try_new(
+            protocol::bind_init_schema(),
+            vec![
+                Arc::new(StringArray::from(vec![self.session_id.clone()])),
+                Arc::new(StringArray::from(vec![statement_id.to_string()])),
+                Arc::new(BinaryArray::from_vec(vec![schema_ipc.as_slice()])),
+            ],
+        )?;
+        let mut logical_bytes = 0usize;
+        let send = |exchange: &mut dyn FnMut(&RecordBatch, Option<&Metadata>) -> Result<()>| {
+            for batch in batches {
+                let batch = batch?;
+                logical_bytes = logical_bytes
+                    .checked_add(batch.get_array_memory_size())
+                    .ok_or_else(|| invalid("bind stream size overflow"))?;
+                if logical_bytes > self.max_bind_bytes {
+                    return Err(invalid(format!(
+                        "bind stream exceeds the {} byte limit (at least {logical_bytes} bytes)",
+                        self.max_bind_bytes
+                    )));
+                }
+                exchange(&batch, None)?;
+            }
+            let finish = RecordBatch::new_empty(schema);
+            let metadata = Metadata::from([(
+                protocol::BIND_FINISH_METADATA_KEY.to_string(),
+                "1".to_string(),
+            )]);
+            exchange(&finish, Some(&metadata))
+        };
+
+        match &self.transport {
+            RemoteTransport::Http(_) => {
+                let mut client = self.client()?;
+                let mut stream = client
+                    .open_exchange(method, &init, None, false)
+                    .map_err(rpc_error)?;
+                let result = send(&mut |batch, metadata| {
+                    stream
+                        .exchange(batch, metadata)
+                        .map_err(rpc_error)?
+                        .ok_or_else(|| internal("bind exchange ended before acknowledgement"))?;
+                    Ok(())
+                });
+                if result.is_err() {
+                    let _ = stream.cancel();
+                }
+                result
+            }
+            RemoteTransport::Byte(byte) => {
+                let mut client = byte
+                    .client
+                    .lock()
+                    .map_err(|_| internal("VGI byte-stream client is poisoned"))?;
+                let mut stream = client
+                    .open_exchange(method, &init, None, false)
+                    .map_err(rpc_error)?;
+                let result = send(&mut |batch, metadata| {
+                    stream
+                        .exchange(batch, metadata)
+                        .map_err(rpc_error)?
+                        .ok_or_else(|| internal("bind exchange ended before acknowledgement"))?;
+                    Ok(())
+                });
+                if result.is_err() {
+                    let _ = stream.cancel();
+                }
+                result
+            }
+        }
+    }
+
     fn session_call(&self, method: &str) -> Result<()> {
         self.call(method, &session_request(&self.session_id)?)?;
         Ok(())
@@ -903,19 +1003,113 @@ enum RemoteReaderMode {
         pending: VecDeque<RecordBatch>,
         continuation: Option<String>,
     },
-    Byte {
-        sequence: i64,
-    },
+    Byte(ByteReader),
+}
+
+enum ByteReaderCommand {
+    Next(mpsc::Sender<Result<Option<RecordBatch>>>),
+    Cancel,
+}
+
+struct ByteReader {
+    tx: SyncSender<ByteReaderCommand>,
+}
+
+impl ByteReader {
+    fn open(connector: ByteConnector, request: RecordBatch) -> Result<Self> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let (ready_tx, ready_rx) = mpsc::channel();
+        thread::Builder::new()
+            .name("adbc-proxy-result-stream".to_string())
+            .spawn(move || {
+                let (mut client, lease) = match connector.connect() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error));
+                        return;
+                    }
+                };
+                let mut stream = match client.open_producer(
+                    protocol::method::READ_RESULT,
+                    &request,
+                    None,
+                    false,
+                ) {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(rpc_error(error)));
+                        return;
+                    }
+                };
+                if ready_tx.send(Ok(())).is_err() {
+                    return;
+                }
+                while let Ok(command) = rx.recv() {
+                    match command {
+                        ByteReaderCommand::Next(reply) => {
+                            let value = stream
+                                .tick()
+                                .map(|value| value.map(|(batch, _)| batch))
+                                .map_err(rpc_error);
+                            let finished = matches!(value, Ok(None)) || value.is_err();
+                            let _ = reply.send(value);
+                            if finished {
+                                break;
+                            }
+                        }
+                        ByteReaderCommand::Cancel => {
+                            let _ = stream.cancel();
+                            break;
+                        }
+                    }
+                }
+                drop(stream);
+                drop(lease);
+            })
+            .map_err(|error| internal(format!("start result stream worker: {error}")))?;
+        ready_rx
+            .recv()
+            .map_err(|_| internal("result stream worker stopped during startup"))??;
+        Ok(Self { tx })
+    }
+
+    fn next(&self) -> Result<Option<RecordBatch>> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(ByteReaderCommand::Next(reply_tx))
+            .map_err(|_| internal("result stream worker stopped"))?;
+        reply_rx
+            .recv()
+            .map_err(|_| internal("result stream worker stopped"))?
+    }
+}
+
+impl Drop for ByteReader {
+    fn drop(&mut self) {
+        let _ = self.tx.send(ByteReaderCommand::Cancel);
+    }
 }
 
 impl RemoteReader {
     fn open(remote: Arc<RemoteConnection>, result_id: String, schema: SchemaRef) -> Result<Self> {
         if !remote.transport.is_http() {
+            let request = RecordBatch::try_new(
+                protocol::read_result_schema(),
+                vec![
+                    Arc::new(StringArray::from(vec![remote.session_id.clone()])),
+                    Arc::new(StringArray::from(vec![result_id.clone()])),
+                    Arc::new(Int64Array::from(vec![0])),
+                ],
+            )?;
+            let RemoteTransport::Byte(byte) = &remote.transport else {
+                unreachable!();
+            };
+            let reader = ByteReader::open(byte.connector.clone(), request)?;
             return Ok(Self {
                 remote,
                 result_id,
                 schema,
-                mode: RemoteReaderMode::Byte { sequence: 0 },
+                mode: RemoteReaderMode::Byte(reader),
                 finished: false,
             });
         }
@@ -981,28 +1175,10 @@ impl RemoteReader {
                 self.finished = finished || continuation.is_none();
                 Ok(batch)
             }
-            RemoteReaderMode::Byte { sequence } => {
-                let request = RecordBatch::try_new(
-                    protocol::read_result_schema(),
-                    vec![
-                        Arc::new(StringArray::from(vec![self.remote.session_id.clone()])),
-                        Arc::new(StringArray::from(vec![self.result_id.clone()])),
-                        Arc::new(Int64Array::from(vec![*sequence])),
-                    ],
-                )?;
-                let response = self
-                    .remote
-                    .call(protocol::method::READ_RESULT_BATCH, &request)?;
-                let finished = boolean_column(&response, "finished")?;
-                if finished {
-                    self.finished = true;
-                    return Ok(None);
-                }
-                let payload = binary_column(&response, "payload")?.to_vec();
-                let batch = protocol::decode_result_batch(payload)
-                    .map_err(|error| internal(error.to_string()))?;
-                *sequence += 1;
-                Ok(Some(batch))
+            RemoteReaderMode::Byte(reader) => {
+                let batch = reader.next()?;
+                self.finished = batch.is_none();
+                Ok(batch)
             }
         }
     }
@@ -1194,24 +1370,6 @@ fn binary_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a [u8]> {
     if batch.num_rows() != 1 || values.is_null(0) {
         return Err(internal(format!(
             "response column {name:?} must contain one non-null value"
-        )));
-    }
-    Ok(values.value(0))
-}
-
-fn boolean_column(batch: &RecordBatch, name: &str) -> Result<bool> {
-    let (index, _) = batch
-        .schema()
-        .column_with_name(name)
-        .ok_or_else(|| internal(format!("proxy response is missing {name:?}")))?;
-    let values = batch
-        .column(index)
-        .as_any()
-        .downcast_ref::<BooleanArray>()
-        .ok_or_else(|| internal(format!("proxy response column {name:?} is not boolean")))?;
-    if batch.num_rows() != 1 || values.is_null(0) {
-        return Err(internal(format!(
-            "proxy response column {name:?} must contain one non-null value"
         )));
     }
     Ok(values.value(0))
@@ -1615,7 +1773,7 @@ mod tests {
     }
 
     #[test]
-    fn max_bind_bytes_is_positive_and_below_current_protocol_ceiling() {
+    fn max_bind_bytes_is_positive_and_supports_the_full_adbc_integer_range() {
         let mut database = ProxyDatabase::default();
         assert_eq!(
             database
@@ -1632,15 +1790,6 @@ mod tests {
                 .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
                 .unwrap(),
             protocol::MAX_CONFIGURABLE_BIND_BYTES
-        );
-        database.options.insert(
-            OPTION_MAX_BIND_BYTES.into(),
-            OptionValue::Int(protocol::MAX_CONFIGURABLE_BIND_BYTES as i64 + 1),
-        );
-        assert!(
-            database
-                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
-                .is_err()
         );
         database
             .options

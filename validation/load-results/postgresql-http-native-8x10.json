@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-23",
+  "platform": "macOS-15.6.1-arm64",
+  "protocol_version": "0.2.0",
+  "backend": "postgresql",
+  "transport": "http",
+  "workers": 8,
+  "iterations_per_worker": 10,
+  "dataset_rows": 20000,
+  "query_rows": 1024,
+  "payload_bytes": 64,
+  "queries": 80,
+  "rows": 81920,
+  "arrow_bytes": 6225920,
+  "errors": 0,
+  "queries_per_second": 744.554,
+  "latency_ms": {"p50": 8.455, "p95": 13.284, "p99": 20.232, "max": 20.232},
+  "server_rss_mib": {"min": 19.750, "max": 35.453, "last": 35.453}
+}

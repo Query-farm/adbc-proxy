@@ -10,6 +10,7 @@ adbc-proxy-protocol = { path = "../adbc-proxy-protocol" }
 adbc_core.workspace = true
 adbc_driver_manager.workspace = true
 arrow-array.workspace = true
+arrow-ipc.workspace = true
 arrow-schema.workspace = true
 axum.workspace = true
 clap.workspace = true
@@ -29,10 +30,10 @@ uuid.workspace = true
 vgi-rpc.workspace = true
 iroh.workspace = true
 vgi-rpc-iroh.workspace = true
+tempfile = "3"
 
 [dev-dependencies]
 adbc-driver-proxy = { path = "../adbc-driver-proxy" }
 arrow-array.workspace = true
 rcgen = "0.14"
-tempfile = "3"
 vgi-rpc-client.workspace = true

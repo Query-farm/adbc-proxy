@@ -196,10 +196,9 @@ def main() -> None:
         "backend": backend,
         "transport": transport,
         "limits": {
-            "bind_arrow_ipc_bytes": configured_bind_cap,
-            "server_bind_arrow_ipc_bytes": server_bind_cap,
+            "client_cumulative_bind_bytes": configured_bind_cap,
+            "server_cumulative_bind_bytes": server_bind_cap,
             "http_client_response_bytes": budget,
-            "max_configurable_monolithic_bind_bytes": (2**31 - 1) - MIB,
             "vgi_rust_impl_message_bytes": 2**32 - 1,
         },
         "rss_kib": {"baseline": rss_kib(server_pid)},
@@ -235,8 +234,8 @@ def main() -> None:
                 connection,
                 f"CREATE TABLE proxy_large_payload (payload {blob_type} NOT NULL)",
             )
-            # Four KiB leaves room for Arrow IPC and the VGI request envelope;
-            # the exact byte-level Arrow boundary is covered by the Rust test.
+            # Four KiB leaves room for Arrow array and IPC bookkeeping while
+            # bracketing the configured cumulative native-stream budget.
             for stream in (False, True):
                 binding = "bind_stream" if stream else "bind"
                 margin = min(4096, configured_bind_cap // 4)

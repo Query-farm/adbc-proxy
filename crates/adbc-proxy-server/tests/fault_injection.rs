@@ -358,6 +358,16 @@ fn unsupported<T>() -> AdbcResult<T> {
     ))
 }
 
+fn wait_until(mut predicate: impl FnMut() -> bool) {
+    for _ in 0..100 {
+        if predicate() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(predicate(), "condition did not become true before deadline");
+}
+
 fn structured_error(status: Status, message: &str) -> AdbcError {
     AdbcError {
         message: message.to_string(),
@@ -414,6 +424,26 @@ fn manager(
             max_results_per_session: 2,
         },
         TargetAuthorizer::default(),
+    ))
+}
+
+fn manager_with_operation_timeout(
+    state: Arc<FaultState>,
+    operation_timeout: Duration,
+) -> Arc<SessionManager> {
+    Arc::new(SessionManager::with_limits_authorizer_and_timeout(
+        Arc::new(FaultBackend { state }),
+        HashMap::from([("fault".to_string(), target())]),
+        Duration::from_secs(60),
+        false,
+        SessionLimits {
+            max_sessions: 4,
+            max_sessions_per_principal: 2,
+            max_statements_per_session: 2,
+            max_results_per_session: 2,
+        },
+        TargetAuthorizer::default(),
+        operation_timeout,
     ))
 }
 
@@ -569,6 +599,7 @@ async fn stream_cancel_reclaims_only_the_result_and_abandonment_uses_lease_clean
         manager.resource_counts().unwrap(),
         ResourceCounts::default()
     );
+    wait_until(|| state.reader_drops.load(Ordering::SeqCst) == 2);
     assert_eq!(state.reader_drops.load(Ordering::SeqCst), 2);
     server.abort();
 }
@@ -652,7 +683,7 @@ async fn malformed_and_replayed_reads_are_stable_and_service_remains_healthy() {
     let (endpoint, server) =
         start_server(Arc::clone(&manager), Duration::from_secs(1), false).await;
 
-    let (first_payload, replay_payload, gap_status) = tokio::task::spawn_blocking({
+    let (first_value, replay_value, gap_status) = tokio::task::spawn_blocking({
         let endpoint = endpoint.clone();
         let session_id = session_id.clone();
         let result_id = result_id.clone();
@@ -660,31 +691,42 @@ async fn malformed_and_replayed_reads_are_stable_and_service_remains_healthy() {
             let mut client = client(&endpoint, None);
             let request = result_request(&session_id, &result_id, 0);
             let first = client
-                .call_unary(protocol::method::READ_RESULT_BATCH, &request, None)
+                .open_producer(protocol::method::READ_RESULT, &request, None, false)
                 .unwrap()
+                .next_with_token()
+                .unwrap()
+                .unwrap()
+                .0
                 .0;
             let replay = client
-                .call_unary(protocol::method::READ_RESULT_BATCH, &request, None)
+                .open_producer(protocol::method::READ_RESULT, &request, None, false)
                 .unwrap()
+                .next_with_token()
+                .unwrap()
+                .unwrap()
+                .0
                 .0;
             let gap = result_request(&session_id, &result_id, 2);
             let gap = client
-                .call_unary(protocol::method::READ_RESULT_BATCH, &gap, None)
-                .unwrap_err();
+                .open_producer(protocol::method::READ_RESULT, &gap, None, false)
+                .err()
+                .expect("gap read must fail");
             let next = result_request(&session_id, &result_id, 1);
             client
-                .call_unary(protocol::method::READ_RESULT_BATCH, &next, None)
+                .open_producer(protocol::method::READ_RESULT, &next, None, false)
+                .unwrap()
+                .next_with_token()
                 .unwrap();
             (
-                protocol::binary_value(&first, "payload").unwrap().to_vec(),
-                protocol::binary_value(&replay, "payload").unwrap().to_vec(),
+                protocol::int64_value(&first, "value").unwrap(),
+                protocol::int64_value(&replay, "value").unwrap(),
                 wire_error(gap).status,
             )
         }
     })
     .await
     .unwrap();
-    assert_eq!(first_payload, replay_payload);
+    assert_eq!(first_value, replay_value);
     assert_eq!(gap_status, "invalid_state");
     assert_eq!(state.reader_nexts.load(Ordering::SeqCst), 2);
 
@@ -704,11 +746,13 @@ async fn malformed_and_replayed_reads_are_stable_and_service_remains_healthy() {
             let mut client = client(&endpoint, None);
             let request = result_request(&session_id, &error_result_id, 0);
             let first = client
-                .call_unary(protocol::method::READ_RESULT_BATCH, &request, None)
-                .unwrap_err();
+                .open_producer(protocol::method::READ_RESULT, &request, None, false)
+                .err()
+                .expect("reader error must be surfaced");
             let replay = client
-                .call_unary(protocol::method::READ_RESULT_BATCH, &request, None)
-                .unwrap_err();
+                .open_producer(protocol::method::READ_RESULT, &request, None, false)
+                .err()
+                .expect("reader error replay must be surfaced");
             let malformed = session_request(&session_id);
             let malformed = client
                 .call_unary(protocol::method::CANCEL_STATEMENT, &malformed, None)
@@ -728,6 +772,85 @@ async fn malformed_and_replayed_reads_are_stable_and_service_remains_healthy() {
     assert_eq!(first_error, replay_error);
     assert_eq!(state.reader_nexts.load(Ordering::SeqCst), before + 1);
     assert_ne!(malformed_type, "AdbcError");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_actor_deadline_and_cancellation_are_independent() {
+    let state = Arc::new(FaultState::default());
+    state.commit_delay_ms.store(250, Ordering::SeqCst);
+    let manager = manager_with_operation_timeout(Arc::clone(&state), Duration::from_millis(30));
+    let (session_id, statement_id) = open_session(&manager, "\0anonymous");
+    let session = manager.get(&session_id, "\0anonymous").unwrap();
+
+    let started = std::time::Instant::now();
+    let error = session.commit().unwrap_err();
+    assert_eq!(error.status, Status::Timeout);
+    assert!(started.elapsed() < Duration::from_millis(150));
+    assert!(state.commit_started.load(Ordering::SeqCst));
+    assert!(!state.commit_finished.load(Ordering::SeqCst));
+
+    let mut cancel_threads = Vec::new();
+    for _ in 0..8 {
+        let session = Arc::clone(&session);
+        let statement_id = statement_id.clone();
+        cancel_threads.push(std::thread::spawn(move || {
+            session.cancel_connection().unwrap();
+            session.cancel_statement(&statement_id).unwrap();
+        }));
+    }
+    for thread in cancel_threads {
+        thread.join().unwrap();
+    }
+    assert_eq!(state.connection_cancels.load(Ordering::SeqCst), 8);
+    assert_eq!(state.statement_cancels.load(Ordering::SeqCst), 8);
+
+    let queued = session.rollback().unwrap_err();
+    assert_eq!(queued.status, Status::Timeout);
+    tokio::time::sleep(Duration::from_millis(260)).await;
+    session.rollback().unwrap();
+}
+
+#[test]
+fn shutdown_detaches_a_timed_out_driver_without_joining_its_worker() {
+    let state = Arc::new(FaultState::default());
+    state.commit_delay_ms.store(500, Ordering::SeqCst);
+    let manager = manager_with_operation_timeout(Arc::clone(&state), Duration::from_millis(20));
+    let (session_id, _) = open_session(&manager, "\0anonymous");
+    let session = manager.get(&session_id, "\0anonymous").unwrap();
+    assert_eq!(session.commit().unwrap_err().status, Status::Timeout);
+    assert!(state.commit_started.load(Ordering::SeqCst));
+
+    let started = std::time::Instant::now();
+    assert_eq!(manager.close_all().unwrap(), 1);
+    assert!(started.elapsed() < Duration::from_millis(100));
+    assert_eq!(manager.resource_counts().unwrap().sessions, 0);
+    drop(session);
+    wait_until(|| state.connection_cancels.load(Ordering::SeqCst) >= 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actor_deadline_is_a_structured_adbc_timeout_not_a_transport_timeout() {
+    let state = Arc::new(FaultState::default());
+    state.commit_delay_ms.store(200, Ordering::SeqCst);
+    let manager = manager_with_operation_timeout(Arc::clone(&state), Duration::from_millis(20));
+    let (session_id, _) = open_session(&manager, "\0anonymous");
+    let (endpoint, server) =
+        start_server(Arc::clone(&manager), Duration::from_secs(1), false).await;
+    let wire = tokio::task::spawn_blocking(move || {
+        let error = client(&endpoint, None)
+            .call_unary(
+                protocol::method::COMMIT,
+                &session_request(&session_id),
+                None,
+            )
+            .unwrap_err();
+        wire_error(error)
+    })
+    .await
+    .unwrap();
+    assert_eq!(wire.status, "timeout");
+    assert_eq!(state.connection_cancels.load(Ordering::SeqCst), 0);
     server.abort();
 }
 
@@ -831,6 +954,7 @@ fn shutdown_detaches_live_handles_and_drops_them_after_in_flight_users_finish() 
             sessions: 1,
             statements: 1,
             results: 1,
+            bind_uploads: 0,
             opening_sessions: 0,
         }
     );
@@ -850,15 +974,20 @@ fn shutdown_detaches_live_handles_and_drops_them_after_in_flight_users_finish() 
     ));
 
     drop(in_flight);
+    wait_until(|| state.connection_drops.load(Ordering::SeqCst) == 1);
     assert_eq!(state.reader_drops.load(Ordering::SeqCst), 1);
     assert_eq!(state.statement_drops.load(Ordering::SeqCst), 1);
     assert_eq!(state.connection_drops.load(Ordering::SeqCst), 1);
 
-    // Closing the registry releases global and per-principal quota.
-    let replacement = manager
-        .open("\0anonymous".to_string(), "fault", Vec::new(), Vec::new())
-        .unwrap();
-    manager.close(&replacement, "\0anonymous").unwrap();
+    // Shutdown is terminal: a late connection cannot repopulate the detached
+    // registry.
+    assert_eq!(
+        manager
+            .open("\0anonymous".to_string(), "fault", Vec::new(), Vec::new())
+            .unwrap_err()
+            .status,
+        Status::InvalidState
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

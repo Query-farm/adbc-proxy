@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adbc-driver-proxy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "adbc-proxy-protocol",
  "adbc_core",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "adbc-proxy-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
@@ -37,13 +37,14 @@ dependencies = [
 
 [[package]]
 name = "adbc-proxy-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "adbc-driver-proxy",
  "adbc-proxy-protocol",
  "adbc_core",
  "adbc_driver_manager",
  "arrow-array",
+ "arrow-ipc",
  "arrow-schema",
  "axum",
  "clap",

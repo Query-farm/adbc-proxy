@@ -516,6 +516,24 @@ fn query_values(
     let mut connection = database.new_connection()?;
     let mut statement = connection.new_statement()?;
     statement.set_sql_query("select value from test")?;
+    let schema = value_schema();
+    statement.bind(RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int64Array::from(vec![10, 11]))],
+    )?)?;
+    assert_eq!(statement.execute_update()?, Some(2));
+    let stream = vec![
+        Ok(RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![12]))],
+        )?),
+        Ok(RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![13, 14]))],
+        )?),
+    ];
+    statement.bind_stream(Box::new(RecordBatchIterator::new(stream, schema)))?;
+    assert_eq!(statement.execute_update()?, Some(3));
     let mut values = Vec::new();
     for batch in statement.execute()? {
         let batch = batch.map_err(adbc_core::error::Error::from)?;

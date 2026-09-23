@@ -48,13 +48,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     let config = Config::from_path(&args.config)?;
-    let manager = Arc::new(SessionManager::with_limits_and_authorizer(
+    let manager = Arc::new(SessionManager::with_limits_authorizer_and_timeout(
         Arc::new(DriverManagerBackend),
         config.targets.clone(),
         Duration::from_secs(config.server.session_ttl_seconds),
         config.server.require_authentication,
         config.server.session_limits(),
         config.target_authorizer(),
+        Duration::from_secs(config.server.driver_operation_timeout_seconds),
     ));
     let server_id = args
         .server_id
@@ -165,22 +166,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     shutdown.cancel();
     tcp_shutdown.store(true, Ordering::Release);
-    if !http_finished {
-        http_task.await??;
-    }
-    if let Some(task) = tcp_task
-        && !tcp_finished
-    {
-        task.await??;
-    }
-    if let Some(task) = iroh_task
-        && !iroh_finished
-    {
-        task.await??;
-    }
-    reaper.abort();
     let closed = manager.close_all()?;
     info!(closed, "closed ADBC sessions during shutdown");
+    let grace = Duration::from_secs(config.server.shutdown_grace_seconds);
+    let drain = async {
+        if !http_finished {
+            (&mut http_task).await??;
+        }
+        if let Some(task) = tcp_task.as_mut()
+            && !tcp_finished
+        {
+            task.await??;
+        }
+        if let Some(task) = iroh_task.as_mut()
+            && !iroh_finished
+        {
+            task.await??;
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    };
+    match tokio::time::timeout(grace, drain).await {
+        Ok(result) => result?,
+        Err(_) => {
+            warn!(
+                ?grace,
+                "shutdown drain deadline expired; detaching remaining work"
+            );
+            http_task.abort();
+            if let Some(task) = tcp_task.as_ref() {
+                task.abort();
+            }
+            if let Some(task) = iroh_task.as_ref() {
+                task.abort();
+            }
+        }
+    }
+    reaper.abort();
     if let Some(provider) = tracer_provider {
         provider.shutdown()?;
     }

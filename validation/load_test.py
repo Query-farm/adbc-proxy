@@ -33,7 +33,7 @@ def database_options() -> dict[str, str]:
     options = {
         "driver": str(Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)),
         "entrypoint": "AdbcDriverProxyInit",
-        "uri": require_env("ADBC_PROXY_ENDPOINT"),
+        "adbc.proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
         "adbc.proxy.target": require_env("ADBC_PROXY_TARGET"),
     }
     optional = {
@@ -48,6 +48,8 @@ def database_options() -> dict[str, str]:
     for environment, option in optional.items():
         if value := os.environ.get(environment):
             options[option] = value
+    if value := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+        options["uri"] = value
     return options
 
 

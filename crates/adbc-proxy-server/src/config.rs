@@ -168,6 +168,53 @@ pub struct TargetConfig {
     pub allow_client_database_options: bool,
     #[serde(default)]
     pub allow_client_connection_options: bool,
+    #[serde(default)]
+    pub allowed_client_database_options: Vec<String>,
+    #[serde(default)]
+    pub allowed_client_connection_options: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientOptionPolicy {
+    allow_all: bool,
+    allowed: HashSet<String>,
+    protected: HashSet<String>,
+}
+
+impl ClientOptionPolicy {
+    fn new(allow_all: bool, allowed: &[String], configured: &[WireOption]) -> Self {
+        Self {
+            allow_all,
+            allowed: allowed.iter().cloned().collect(),
+            protected: configured.iter().map(|option| option.key.clone()).collect(),
+        }
+    }
+
+    pub fn permits(&self, key: &str) -> bool {
+        !self.protected.contains(key) && (self.allow_all || self.allowed.contains(key))
+    }
+
+    pub fn is_protected(&self, key: &str) -> bool {
+        self.protected.contains(key)
+    }
+}
+
+impl TargetConfig {
+    pub fn database_option_policy(&self) -> ClientOptionPolicy {
+        ClientOptionPolicy::new(
+            self.allow_client_database_options,
+            &self.allowed_client_database_options,
+            &self.database_options,
+        )
+    }
+
+    pub fn connection_option_policy(&self) -> ClientOptionPolicy {
+        ClientOptionPolicy::new(
+            self.allow_client_connection_options,
+            &self.allowed_client_connection_options,
+            &self.connection_options,
+        )
+    }
 }
 
 impl Config {
@@ -337,9 +384,62 @@ impl Config {
             }
             validate_options(name, "database", &target.database_options)?;
             validate_options(name, "connection", &target.connection_options)?;
+            validate_option_policy(
+                name,
+                "database",
+                target.allow_client_database_options,
+                &target.allowed_client_database_options,
+                &target.database_options,
+            )?;
+            validate_option_policy(
+                name,
+                "connection",
+                target.allow_client_connection_options,
+                &target.allowed_client_connection_options,
+                &target.connection_options,
+            )?;
         }
         Ok(())
     }
+}
+
+fn validate_option_policy(
+    target: &str,
+    kind: &str,
+    allow_all: bool,
+    allowed: &[String],
+    configured: &[WireOption],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if allow_all && !allowed.is_empty() {
+        return Err(format!(
+            "target {target:?} enables all client {kind} options and also defines an allowlist"
+        )
+        .into());
+    }
+    let protected = configured
+        .iter()
+        .map(|option| option.key.as_str())
+        .collect::<HashSet<_>>();
+    let mut keys = HashSet::new();
+    for key in allowed {
+        if key.trim().is_empty() {
+            return Err(
+                format!("target {target:?} has a blank allowed client {kind} option").into(),
+            );
+        }
+        if !keys.insert(key) {
+            return Err(
+                format!("target {target:?} repeats allowed client {kind} option {key:?}").into(),
+            );
+        }
+        if protected.contains(key.as_str()) {
+            return Err(format!(
+                "target {target:?} marks server-controlled {kind} option {key:?} as client-settable"
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_options(
@@ -452,5 +552,48 @@ driver = "adbc_driver_sqlite"
             "[iroh]\nissuer = \"example.org\"\nsecret_key_file = \"iroh.key\"\n\n[iroh.principals]\n\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" = \"alice\"\n\n[auth.static_bearer_tokens]\ntoken = \"alice\"\n{TARGET}"
         );
         assert!(Config::from_toml(&mapped_iroh).is_ok());
+    }
+
+    #[test]
+    fn validates_client_option_allowlists() {
+        let valid = format!(
+            r#"
+[server]
+require_authentication = false
+
+{TARGET}
+allowed_client_database_options = ["uri", "username"]
+allowed_client_connection_options = ["adbc.connection.autocommit"]
+"#
+        );
+        Config::from_toml(&valid).unwrap();
+
+        let ambiguous = format!(
+            r#"
+[server]
+require_authentication = false
+
+{TARGET}
+allow_client_database_options = true
+allowed_client_database_options = ["uri"]
+"#
+        );
+        assert!(Config::from_toml(&ambiguous).is_err());
+
+        let protected = format!(
+            r#"
+[server]
+require_authentication = false
+
+{TARGET}
+allowed_client_database_options = ["uri"]
+
+[[targets.sqlite.database_options]]
+key = "uri"
+type = "string"
+value = ":memory:"
+"#
+        );
+        assert!(Config::from_toml(&protected).is_err());
     }
 }

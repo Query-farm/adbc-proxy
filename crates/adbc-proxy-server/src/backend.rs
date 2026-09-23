@@ -14,7 +14,7 @@ use adbc_driver_manager::{ManagedConnection, ManagedDriver, ManagedStatement};
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::Schema;
 
-use crate::config::TargetConfig;
+use crate::config::{ClientOptionPolicy, TargetConfig};
 
 pub trait Backend: Send + Sync {
     fn open(
@@ -110,12 +110,14 @@ impl Backend for DriverManagerBackend {
         let database_options = merge_options(
             database_options,
             &target.database_options,
-            target.allow_client_database_options,
+            &target.database_option_policy(),
+            "database",
         )?;
         let connection_options = merge_options(
             connection_options,
             &target.connection_options,
-            target.allow_client_connection_options,
+            &target.connection_option_policy(),
+            "connection",
         )?;
 
         let database = driver.new_database_with_opts(
@@ -135,13 +137,28 @@ impl Backend for DriverManagerBackend {
 fn merge_options(
     client: Vec<(String, OptionValue)>,
     configured: &[adbc_proxy_protocol::WireOption],
-    allow_client: bool,
+    policy: &ClientOptionPolicy,
+    kind: &str,
 ) -> AdbcResult<Vec<(String, OptionValue)>> {
-    let mut merged: HashMap<String, OptionValue> = if allow_client {
-        client.into_iter().collect()
-    } else {
-        HashMap::new()
-    };
+    let mut rejected = client
+        .iter()
+        .filter_map(|(key, _)| (!policy.permits(key)).then_some(key.as_str()))
+        .collect::<Vec<_>>();
+    rejected.sort_unstable();
+    rejected.dedup();
+    if let Some(key) = rejected.first() {
+        let reason = if policy.is_protected(key) {
+            "is controlled by the proxy server"
+        } else {
+            "is not allowed by the target policy"
+        };
+        return Err(adbc_core::error::Error::with_message_and_status(
+            format!("client {kind} option {key:?} {reason}"),
+            adbc_core::error::Status::InvalidArguments,
+        ));
+    }
+
+    let mut merged: HashMap<String, OptionValue> = client.into_iter().collect();
     for option in configured {
         let value = option.value.clone().into_adbc().map_err(|error| {
             adbc_core::error::Error::with_message_and_status(
@@ -333,5 +350,88 @@ impl BackendStatement for ManagerStatement {
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
         Arc::from(self.statement.get_cancel_handle())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use adbc_core::error::Status;
+    use adbc_core::options::OptionValue;
+    use adbc_proxy_protocol::{WireOption, WireOptionValue};
+
+    use super::merge_options;
+    use crate::config::TargetConfig;
+
+    fn target() -> TargetConfig {
+        TargetConfig {
+            driver: "unused".into(),
+            entrypoint: None,
+            database_options: vec![WireOption {
+                key: "password".into(),
+                value: WireOptionValue::String("server-secret".into()),
+            }],
+            connection_options: Vec::new(),
+            allow_client_database_options: false,
+            allow_client_connection_options: false,
+            allowed_client_database_options: vec!["uri".into(), "username".into()],
+            allowed_client_connection_options: vec!["adbc.connection.autocommit".into()],
+        }
+    }
+
+    #[test]
+    fn merges_allowed_client_options_and_server_options() {
+        let target = target();
+        let merged = merge_options(
+            vec![
+                (
+                    "uri".into(),
+                    OptionValue::String("postgresql://db/app".into()),
+                ),
+                ("username".into(), OptionValue::String("alice".into())),
+            ],
+            &target.database_options,
+            &target.database_option_policy(),
+            "database",
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+        assert!(matches!(
+            merged.get("uri"),
+            Some(OptionValue::String(value)) if value == "postgresql://db/app"
+        ));
+        assert!(matches!(
+            merged.get("password"),
+            Some(OptionValue::String(value)) if value == "server-secret"
+        ));
+    }
+
+    #[test]
+    fn rejects_disallowed_and_server_controlled_options() {
+        let target = target();
+        let disallowed = merge_options(
+            vec![("api_key".into(), OptionValue::String("secret".into()))],
+            &target.database_options,
+            &target.database_option_policy(),
+            "database",
+        )
+        .unwrap_err();
+        assert_eq!(disallowed.status, Status::InvalidArguments);
+        assert!(disallowed.message.contains("api_key"));
+
+        let protected = merge_options(
+            vec![(
+                "password".into(),
+                OptionValue::String("client-secret".into()),
+            )],
+            &target.database_options,
+            &target.database_option_policy(),
+            "database",
+        )
+        .unwrap_err();
+        assert_eq!(protected.status, Status::InvalidArguments);
+        assert!(protected.message.contains("controlled by the proxy server"));
+        assert!(!protected.message.contains("client-secret"));
     }
 }

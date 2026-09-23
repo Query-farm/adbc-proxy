@@ -80,8 +80,15 @@ process and complete RPC/authentication configuration have initialized. VGI's
 equivalent `GET /health` endpoint remains enabled. Readiness is process-level;
 it deliberately does not open every downstream database on each probe.
 
-Credentials configured on a target override client-provided options. Client
-database and connection options are discarded unless the corresponding target
-allow flag is explicitly enabled. Do not place bearer tokens or downstream
-passwords in a committed TOML file; inject the runtime configuration through a
-secret-managed deployment mechanism.
+Database and connection options configured on a target are server-controlled.
+Client attempts to supply those keys at connection creation or mutate a
+server-controlled connection key later are rejected without logging the value.
+Other client options must be named in the corresponding per-target allowlist,
+or the target must explicitly enable the broad allow flag. Do not place bearer
+tokens or downstream passwords in a committed TOML file; inject the runtime
+configuration through a secret-managed deployment mechanism.
+
+Allowing the standard database `uri` option lets the principal choose a
+downstream network destination. Treat that as outbound-network authority: use
+it only for trusted principals and combine it with worker-level egress policy
+when the proxy must not reach arbitrary hosts.

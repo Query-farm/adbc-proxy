@@ -39,7 +39,7 @@ def options(response_budget: int) -> dict[str, Any]:
     result: dict[str, Any] = {
         "driver": str(Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)),
         "entrypoint": "AdbcDriverProxyInit",
-        "uri": require_env("ADBC_PROXY_ENDPOINT"),
+        "adbc.proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
         "adbc.proxy.target": require_env("ADBC_PROXY_TARGET"),
         "adbc.proxy.max_response_bytes": response_budget,
     }
@@ -55,6 +55,8 @@ def options(response_budget: int) -> dict[str, Any]:
     for environment, option in optional.items():
         if value := os.environ.get(environment):
             result[option] = value
+    if value := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+        result["uri"] = value
     if value := os.environ.get("ADBC_PROXY_MAX_BIND_BYTES"):
         result["adbc.proxy.max_bind_bytes"] = int(value)
     return result

@@ -15,6 +15,7 @@ use adbc_driver_proxy::{
     OPTION_BEARER_TOKEN, OPTION_IROH_DIRECT_ADDRESS, OPTION_TARGET, OPTION_TLS_CA, OPTION_TLS_CERT,
     OPTION_TLS_KEY, OPTION_TLS_SERVER_NAME, ProxyConnection, ProxyDriver,
 };
+use adbc_proxy_protocol::{WireOption, WireOptionValue};
 use adbc_proxy_server::backend::{Backend, BackendConnection, BackendStatement};
 use adbc_proxy_server::config::TargetConfig;
 use adbc_proxy_server::service::build_server;
@@ -276,9 +277,19 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
             driver: "unused-in-test".to_string(),
             entrypoint: None,
             database_options: Vec::new(),
-            connection_options: Vec::new(),
+            connection_options: vec![WireOption {
+                key: "server.fixed".into(),
+                value: WireOptionValue::String("server-value".into()),
+            }],
             allow_client_database_options: false,
             allow_client_connection_options: false,
+            allowed_client_database_options: Vec::new(),
+            allowed_client_connection_options: vec![
+                OptionConnection::ReadOnly.as_ref().to_string(),
+                "allowed.bytes".into(),
+                "allowed.int".into(),
+                "allowed.double".into(),
+            ],
         },
     );
     let manager = Arc::new(SessionManager::new(
@@ -317,6 +328,36 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
         ])?;
         let mut connection = database.new_connection()?;
         connection.set_option(OptionConnection::ReadOnly, false.into())?;
+        connection.set_option(
+            OptionConnection::Other("allowed.bytes".into()),
+            OptionValue::Bytes(vec![0, 1, 255]),
+        )?;
+        connection.set_option(
+            OptionConnection::Other("allowed.int".into()),
+            OptionValue::Int(i64::MAX),
+        )?;
+        connection.set_option(
+            OptionConnection::Other("allowed.double".into()),
+            OptionValue::Double(1.25),
+        )?;
+        let denied = connection
+            .set_option(
+                OptionConnection::Other("vendor.secret".into()),
+                "must-not-reach-driver".into(),
+            )
+            .unwrap_err();
+        assert_eq!(denied.status, Status::InvalidArguments);
+        assert!(denied.message.contains("vendor.secret"));
+        assert!(!denied.message.contains("must-not-reach-driver"));
+        let protected = connection
+            .set_option(
+                OptionConnection::Other("server.fixed".into()),
+                "client-value".into(),
+            )
+            .unwrap_err();
+        assert_eq!(protected.status, Status::InvalidArguments);
+        assert!(protected.message.contains("controlled by the proxy server"));
+        assert!(!protected.message.contains("client-value"));
         assert_eq!(
             connection.get_option_string(OptionConnection::CurrentCatalog)?,
             "fake"
@@ -355,6 +396,18 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
         connection.rollback()?;
         let mut statement = connection.new_statement()?;
         statement.set_option(OptionStatement::TargetTable, "test".into())?;
+        statement.set_option(
+            OptionStatement::Other("allowed.bytes".into()),
+            OptionValue::Bytes(vec![0, 1, 255]),
+        )?;
+        statement.set_option(
+            OptionStatement::Other("allowed.int".into()),
+            OptionValue::Int(i64::MIN),
+        )?;
+        statement.set_option(
+            OptionStatement::Other("allowed.double".into()),
+            OptionValue::Double(2.5),
+        )?;
         assert_eq!(
             statement.get_option_string(OptionStatement::TargetTable)?,
             "fake"
@@ -451,6 +504,8 @@ async fn authentication_is_required() {
                 connection_options: Vec::new(),
                 allow_client_database_options: false,
                 allow_client_connection_options: false,
+                allowed_client_database_options: Vec::new(),
+                allowed_client_connection_options: Vec::new(),
             },
         )]),
         Duration::from_secs(60),
@@ -495,6 +550,8 @@ fn fake_manager(require_authentication: bool) -> Arc<SessionManager> {
                 connection_options: Vec::new(),
                 allow_client_database_options: false,
                 allow_client_connection_options: false,
+                allowed_client_database_options: Vec::new(),
+                allowed_client_connection_options: Vec::new(),
             },
         )]),
         Duration::from_secs(60),

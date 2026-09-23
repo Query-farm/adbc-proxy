@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::backend::{Backend, BackendConnection, BackendStatement};
 use crate::bind_upload::BindUpload;
-use crate::config::TargetConfig;
+use crate::config::{ClientOptionPolicy, TargetConfig};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SessionLimits {
@@ -110,6 +110,7 @@ pub struct Session {
     resources: Arc<SessionResources>,
     worker: SessionWorker,
     connection_cancel: Arc<dyn CancelHandle>,
+    connection_option_policy: ClientOptionPolicy,
     bind_uploads: Mutex<HashMap<String, BindUploadEntry>>,
     limits: SessionLimits,
 }
@@ -301,6 +302,7 @@ impl SessionManager {
         let target = self.targets.get(target_name).cloned().ok_or_else(|| {
             AdbcError::with_message_and_status("target is not configured", Status::NotFound)
         })?;
+        let connection_option_policy = target.connection_option_policy();
 
         self.reserve_open(&principal)?;
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
@@ -356,6 +358,7 @@ impl SessionManager {
             resources,
             worker,
             connection_cancel,
+            connection_option_policy,
             bind_uploads: Mutex::new(HashMap::new()),
             limits: self.limits,
         });
@@ -601,6 +604,25 @@ impl Session {
                 .map_err(|_| internal("connection is poisoned"))?;
             operation(connection.as_mut())
         })
+    }
+
+    pub fn set_connection_option(
+        &self,
+        key: String,
+        value: adbc_core::options::OptionValue,
+    ) -> Result<(), AdbcError> {
+        if !self.connection_option_policy.permits(&key) {
+            let reason = if self.connection_option_policy.is_protected(&key) {
+                "is controlled by the proxy server"
+            } else {
+                "is not allowed by the target policy"
+            };
+            return Err(AdbcError::with_message_and_status(
+                format!("client connection option {key:?} {reason}"),
+                Status::InvalidArguments,
+            ));
+        }
+        self.with_connection(move |connection| connection.set_option(&key, value))
     }
 
     pub fn cancel_connection(&self) -> Result<(), AdbcError> {
@@ -1229,6 +1251,8 @@ mod tests {
             connection_options: Vec::new(),
             allow_client_database_options: false,
             allow_client_connection_options: false,
+            allowed_client_database_options: Vec::new(),
+            allowed_client_connection_options: Vec::new(),
         }
     }
 

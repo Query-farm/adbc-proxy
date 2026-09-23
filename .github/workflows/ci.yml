@@ -118,3 +118,91 @@ jobs:
           name: foundry-results-${{ matrix.backend }}-${{ matrix.transport }}
           path: validation/foundry-results.xml
           if-no-files-found: ignore
+
+  extended-backends:
+    name: Extended ADBC backend compatibility
+    needs: rust
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 15
+      flightsql:
+        image: voltrondata/sqlflite:v1.5.5
+        env:
+          TLS_ENABLED: "0"
+          SQLFLITE_PASSWORD: flight_password
+        ports:
+          - 31337:31337
+      trino:
+        image: trinodb/trino:483
+        ports:
+          - 18080:8080
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-CU20-ubuntu-22.04
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Adbc_Test_Pass123
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Adbc_Test_Pass123 -C -Q 'SELECT 1' -b"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 30s
+    env:
+      ADBC_PROXY_TRANSPORT: http
+      ADBC_MYSQL_URI: mysql://root:root@127.0.0.1:3306/testdb
+      ADBC_FLIGHTSQL_URI: grpc://127.0.0.1:31337
+      ADBC_FLIGHTSQL_USERNAME: sqlflite_username
+      ADBC_FLIGHTSQL_PASSWORD: flight_password
+      ADBC_TRINO_URI: http://127.0.0.1:18080
+      ADBC_TRINO_USERNAME: trino
+      ADBC_MSSQL_URI: sqlserver://sa:Adbc_Test_Pass123@127.0.0.1:1433
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.11.7
+          enable-cache: true
+      - run: uv python install 3.13
+      - uses: columnar-tech/setup-dbc@v1
+        with:
+          version: v0.3.0
+          drivers: mysql=0.4.0,flightsql=1.9.0,datafusion=0.25.0,trino=0.4.0,mssql=1.4.1
+      - run: cargo build --release --workspace
+      - name: Wait for Flight SQL and Trino
+        run: |
+          for _ in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/31337) >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          (echo > /dev/tcp/127.0.0.1/31337) >/dev/null 2>&1
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18080/v1/info | grep -q '"starting":false'; then
+              break
+            fi
+            sleep 3
+          done
+          curl -fsS http://127.0.0.1:18080/v1/info | grep -q '"starting":false'
+      - name: Run real-driver compatibility smoke
+        run: |
+          for backend in mysql flightsql datafusion trino mssql; do
+            ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh smoke "$backend"
+          done

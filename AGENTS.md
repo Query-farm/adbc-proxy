@@ -24,9 +24,9 @@ HTTP(S), TCP, mutual-TLS TCP, or raw Iroh QUIC streams.
   the wire whenever the downstream driver supplies them.
 - Do not log SQL text, credentials, bearer tokens, connection strings, Arrow
   values, TLS private keys, or raw downstream error messages.
-- Server-configured connection options are authoritative and are applied after
-  caller options. A caller must not be able to override injected credentials
-  or destinations.
+- Server-configured database and connection options are authoritative. Reject
+  caller attempts to supply or mutate those keys; never silently discard an
+  option or allow injected credentials and destinations to be overridden.
 - Plain TCP remains loopback-only by default. Authenticated non-loopback TCP
   requires mTLS with verified identities. Iroh authorization is based on the
   authenticated endpoint ID.

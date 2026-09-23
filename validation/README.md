@@ -8,7 +8,7 @@ Python ADBC driver manager
   -> libadbc_driver_proxy (exported C ABI)
   -> VGI RPC over HTTP, TCP, mTLS TCP, or raw Iroh
   -> adbc-proxy-server
-  -> dynamically loaded SQLite, DuckDB, or PostgreSQL ADBC driver
+  -> dynamically loaded ADBC driver
   -> downstream database
 ```
 
@@ -23,12 +23,16 @@ Python ADBC driver manager
   dbc install "sqlite=1.12.0" --level user
   dbc install "duckdb=1.5.5" --level user
   dbc install "postgresql=1.12.0" --level user
+  dbc install "mysql=0.4.0" --level user
+  dbc install "flightsql=1.9.0" --level user
+  dbc install "datafusion=0.25.0" --level user
+  dbc install "trino=0.4.0" --level user
+  dbc install "mssql=1.4.1" --level user
   ```
 
 `run_external.sh` discovers the selected driver's user-level manifest installed
 by `dbc`. On other systems, or in CI, its absolute library path can be supplied
-with `ADBC_SQLITE_DRIVER`, `ADBC_DUCKDB_DRIVER`, or
-`ADBC_POSTGRESQL_DRIVER`. PostgreSQL uses `ADBC_POSTGRESQL_URI` when supplied;
+with `ADBC_<BACKEND>_DRIVER`. PostgreSQL uses `ADBC_POSTGRESQL_URI` when supplied;
 otherwise the script creates a disposable local cluster with `initdb` and
 `pg_ctl`. Driver installation is deliberately separate from test execution so
 CI can cache or provision pinned artifacts.
@@ -41,6 +45,11 @@ Run the deterministic external smoke test:
 ./validation/run_external.sh smoke sqlite
 ./validation/run_external.sh smoke duckdb
 ./validation/run_external.sh smoke postgresql
+./validation/run_external.sh smoke mysql
+./validation/run_external.sh smoke flightsql
+./validation/run_external.sh smoke datafusion
+./validation/run_external.sh smoke trino
+./validation/run_external.sh smoke mssql
 ```
 
 Select a non-HTTP transport with `ADBC_PROXY_TRANSPORT=tcp`, `mtls`, or
@@ -122,10 +131,16 @@ The separate `external-validation` job:
 
 1. restores/caches the Rust build and `uv` caches;
 2. installs the matrix driver's pinned version with `dbc`;
-3. runs the smoke test against SQLite, DuckDB, and PostgreSQL;
+3. runs the full write/transaction smoke test against SQLite, DuckDB, and PostgreSQL;
 4. runs a small concurrent mTLS load gate so the harness cannot silently rot;
 5. runs payload-budget probes on all four transports plus HTTP wire faults;
 6. runs Foundry against all three and archives each pytest result.
+
+The `extended-backends` job additionally starts MySQL, Flight SQL, Trino, and
+Microsoft SQL Server services and runs a C-ABI query/error compatibility smoke
+through those drivers plus the in-process DataFusion driver. Driver versions
+are pinned; the extended job uses HTTP because transport behavior is already
+covered independently by the SQLite matrix.
 
 The Python manager and Arrow versions are pinned in `pyproject.toml`. The
 Foundry dependency is pinned to commit
@@ -142,12 +157,21 @@ authentication, target selection, downstream dynamic loading, DDL and DML row
 counts, Unicode and binary/null values, prepare, query execution, and Arrow
 stream import. It also verifies Arrow parameter binding, rollback/commit
 visibility, rejected authentication, and preservation of a downstream ADBC
-error status through the C ABI. Foundry tests broaden connection metadata,
+error status through the C ABI. SQLite supplies its downstream `uri` from the
+client, so every transport run also exercises independent proxy/downstream URI
+routing. Each backend rejects disallowed database and runtime connection
+options without reflecting their values. Foundry tests broaden connection metadata,
 SQL/type, bind-stream, transaction, and statement coverage and explicitly skip
 capabilities not declared by each proxy/backend adapter. DuckDB and PostgreSQL
 exercise execute-schema through the proxy; DuckDB also exercises statistics,
 while PostgreSQL statistics run after `ANALYZE` so the downstream driver can
 return approximate values.
+
+The additional MySQL, Flight SQL, DataFusion, Trino, and Microsoft SQL Server
+smokes intentionally use the common denominator—connection, query, Arrow
+result import, and downstream error propagation. Backend-specific Foundry
+adapters remain the next step for claiming broader conformance for those five
+drivers.
 
 Apache's C++ validation library is a source library, not a standalone runner:
 each driver must provide a `DriverQuirks` fixture and link GoogleTest and

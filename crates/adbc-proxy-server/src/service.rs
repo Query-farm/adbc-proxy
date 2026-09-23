@@ -293,7 +293,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
             let key = string(request, "key")?.to_string();
             let value = decode_option_value(string(request, "value_json")?)?;
             session
-                .with_connection(move |connection| connection.set_option(&key, value))
+                .set_connection_option(key, value)
                 .map_err(adbc_rpc_error)?;
             Ok(Some(ok_batch()?))
         },

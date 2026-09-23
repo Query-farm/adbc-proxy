@@ -9,6 +9,10 @@ Last run: 2026-09-23 on macOS 15.6.1 arm64.
 | ASF SQLite ADBC driver | 1.12.0, user-level `dbc` install |
 | DuckDB ADBC driver | 1.5.5, user-level `dbc` install |
 | ASF PostgreSQL ADBC driver | 1.12.0, user-level `dbc` install |
+| MySQL ADBC driver | 0.4.0, user-level `dbc` install |
+| Flight SQL ADBC driver | 1.9.0, user-level `dbc` install |
+| DataFusion ADBC driver | 0.25.0, user-level `dbc` install |
+| Trino ADBC driver | 0.4.0, user-level `dbc` install |
 | PostgreSQL server | 14.21, disposable local cluster |
 | Python ADBC driver manager | 1.12.0 |
 | PyArrow | 25.0.1 |
@@ -43,6 +47,16 @@ PASS ... -> proxy service -> sqlite ADBC
 PASS ... -> proxy service -> duckdb ADBC
 PASS ... -> proxy service -> postgresql ADBC
 ```
+
+After the option-policy and downstream-URI changes, HTTP compatibility smokes
+also passed locally against MySQL 0.4.0 with MySQL 8.4.11, Flight SQL 1.9.0
+with SQLFlite v1.5.5, DataFusion 0.25.0, and Trino 0.4.0 with Trino 483. The
+same pass reran SQLite, DuckDB, and PostgreSQL. Each smoke additionally proved
+that disallowed database and runtime connection options return
+`INVALID_ARGUMENT` without reflecting their values; SQLite supplied its real
+database `uri` from the client alongside an independent `adbc.proxy.uri`.
+Microsoft SQL Server remains assigned to the x86 Linux CI service because the
+local host is arm64.
 
 This passed through an independently installed Python driver manager and the
 exported proxy dynamic library. It covered authentication rejection and

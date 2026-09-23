@@ -404,6 +404,8 @@ fn target() -> TargetConfig {
         connection_options: Vec::new(),
         allow_client_database_options: false,
         allow_client_connection_options: false,
+        allowed_client_database_options: Vec::new(),
+        allowed_client_connection_options: Vec::new(),
     }
 }
 

@@ -36,11 +36,13 @@ class ProxySqliteQuirks(model.DriverQuirks):
         current_schema="",
     )
     _database_options = {
-        "uri": model.FromEnv("ADBC_PROXY_ENDPOINT"),
+        "adbc.proxy.uri": model.FromEnv("ADBC_PROXY_ENDPOINT"),
         "adbc.proxy.target": model.FromEnv("ADBC_PROXY_TARGET"),
     }
     if os.environ.get("ADBC_PROXY_TOKEN"):
         _database_options["adbc.proxy.auth.bearer_token"] = model.FromEnv("ADBC_PROXY_TOKEN")
+    if os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+        _database_options["uri"] = model.FromEnv("ADBC_PROXY_DOWNSTREAM_URI")
     if os.environ.get("ADBC_PROXY_IROH_DIRECT_ADDRESS"):
         _database_options["adbc.proxy.iroh.direct_address"] = model.FromEnv(
             "ADBC_PROXY_IROH_DIRECT_ADDRESS"

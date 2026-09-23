@@ -125,9 +125,15 @@ impl ProxyDatabase {
     }
 
     fn remote_options(&self) -> Vec<protocol::WireOption> {
+        // `uri` historically doubled as the proxy endpoint.  Once the explicit
+        // proxy URI is present, preserve the standard ADBC `uri` option for the
+        // downstream driver.
+        let legacy_uri_is_proxy = !self.options.contains_key(OPTION_PROXY_URI);
         self.options
             .iter()
-            .filter(|(key, _)| !is_proxy_database_option(key))
+            .filter(|(key, _)| {
+                !is_proxy_database_option(key) && !(legacy_uri_is_proxy && key.as_str() == "uri")
+            })
             .map(|(key, value)| protocol::WireOption {
                 key: key.clone(),
                 value: protocol::WireOptionValue::from(value),
@@ -1532,7 +1538,6 @@ fn is_proxy_database_option(key: &str) -> bool {
             | OPTION_TLS_SERVER_NAME
             | OPTION_IROH_SECRET_KEY
             | OPTION_IROH_DIRECT_ADDRESS
-            | "uri"
     )
 }
 
@@ -1599,6 +1604,41 @@ mod tests {
         assert!(is_proxy_database_option(OPTION_TARGET));
         assert!(is_proxy_database_option(OPTION_MAX_BIND_BYTES));
         assert!(!is_proxy_database_option("username"));
+    }
+
+    #[test]
+    fn explicit_proxy_uri_preserves_downstream_uri() {
+        let mut database = ProxyDatabase::default();
+        database
+            .set_option(
+                OptionDatabase::Other(OPTION_PROXY_URI.into()),
+                "http://localhost:8080".into(),
+            )
+            .unwrap();
+        database
+            .set_option(
+                OptionDatabase::Uri,
+                "postgresql://database.example/app".into(),
+            )
+            .unwrap();
+
+        let options = database.remote_options();
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].key, "uri");
+        assert_eq!(
+            options[0].value,
+            protocol::WireOptionValue::String("postgresql://database.example/app".into())
+        );
+    }
+
+    #[test]
+    fn legacy_uri_endpoint_is_not_forwarded() {
+        let mut database = ProxyDatabase::default();
+        database
+            .set_option(OptionDatabase::Uri, "http://localhost:8080".into())
+            .unwrap();
+
+        assert!(database.remote_options().is_empty());
     }
 
     #[test]

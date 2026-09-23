@@ -133,7 +133,7 @@ with adbc.connect(
     driver=proxy_driver,
     entrypoint="AdbcDriverProxyInit",
     db_kwargs={
-        "uri": "http://127.0.0.1:8080",
+        "adbc.proxy.uri": "http://127.0.0.1:8080",
         "adbc.proxy.target": "sqlite",
         "adbc.proxy.auth.bearer_token": "development-token",
     },
@@ -164,8 +164,8 @@ and transport sections.
 
 Each target names an ADBC driver known to the server's ADBC driver manager and
 may inject database or connection options. Server-configured options are
-applied after caller-provided options, so callers cannot replace an injected
-database URI or credential.
+immutable: a caller receives `INVALID_ARGUMENT` if it tries to supply or later
+change a server-controlled option such as a database URI or credential.
 
 ```toml
 [targets.postgresql]
@@ -173,6 +173,13 @@ driver = "postgresql"
 entrypoint = "AdbcDriverPostgresqlInit"
 allow_client_database_options = false
 allow_client_connection_options = false
+allowed_client_connection_options = [
+  "adbc.connection.autocommit",
+  "adbc.connection.readonly",
+  "adbc.connection.catalog",
+  "adbc.connection.db_schema",
+  "adbc.connection.transaction.isolation_level",
+]
 
 [[targets.postgresql.database_options]]
 key = "uri"
@@ -184,10 +191,63 @@ Supported option value types are `string`, `bytes` (base64 encoded), `int`,
 and `double`. Do not commit credentials to source control; supply the runtime
 configuration through your deployment's secret-management mechanism.
 
-Set `allow_client_database_options` or `allow_client_connection_options` only
-when callers are permitted to provide their own downstream options. Proxy
-transport options are never forwarded. Configured server values still win on
-duplicate keys.
+Use `allowed_client_database_options` and `allowed_client_connection_options`
+to expose only specific downstream options. The broader
+`allow_client_database_options` and `allow_client_connection_options` switches
+allow every non-server-controlled option and are intended for trusted targets.
+Disallowed options are rejected rather than silently ignored. Proxy transport
+options are never forwarded.
+
+The explicit `adbc.proxy.uri` option identifies the proxy. When it is present,
+the standard ADBC `uri` database option is forwarded to the downstream driver,
+which supports caller-selected destinations when target policy allows it:
+
+```toml
+[targets.postgresql-byoc]
+driver = "postgresql"
+entrypoint = "AdbcDriverPostgresqlInit"
+allowed_client_database_options = ["uri", "username", "password"]
+allowed_client_connection_options = [
+  "adbc.connection.autocommit",
+  "adbc.connection.readonly",
+  "adbc.connection.db_schema",
+]
+```
+
+```python
+with adbc.connect(
+    driver=proxy_driver,
+    entrypoint="AdbcDriverProxyInit",
+    db_kwargs={
+        "adbc.proxy.uri": "iroh://<proxy-endpoint-id>",
+        "adbc.proxy.target": "postgresql-byoc",
+        "uri": "postgresql://database.example/app",
+        "username": "alice",
+        "password": "...",
+    },
+    conn_kwargs={
+        "adbc.connection.readonly": "true",
+        "adbc.connection.db_schema": "analytics",
+    },
+) as connection:
+    ...
+```
+
+For compatibility, `uri` is still treated as the proxy endpoint when
+`adbc.proxy.uri` is absent; that legacy form cannot also provide a downstream
+URI.
+
+`db_kwargs` and `conn_kwargs` set creation-time database and connection
+options. After connection creation, Python applications can use
+`connection.adbc_connection.set_options(...)` and
+`cursor.adbc_statement.set_options(...)` for runtime or statement options.
+The proxy preserves arbitrary option names and all current ADBC value types:
+string, bytes, signed 64-bit integer, and double. Boolean ADBC options use the
+standard `"true"` and `"false"` string values. The selected downstream driver
+still determines whether a particular option and mutation phase are supported.
+Connection and statement getters query the downstream driver. Database getters
+reflect the caller-side proxy database object; server-injected database values
+are deliberately not returned to clients, which prevents credential disclosure.
 
 ### Authentication and authorization
 
@@ -223,7 +283,7 @@ Pass these as ADBC database options when opening the proxy driver:
 
 | Option | Purpose | Default |
 | --- | --- | --- |
-| `uri` or `adbc.proxy.uri` | Proxy endpoint using `http://`, `https://`, `tcp://`, `tls+tcp://`, or `iroh://` | required |
+| `adbc.proxy.uri` | Proxy endpoint using `http://`, `https://`, `tcp://`, `tls+tcp://`, or `iroh://` | required (`uri` is a legacy fallback) |
 | `adbc.proxy.target` | Server-configured target name | required |
 | `adbc.proxy.auth.bearer_token` | HTTP(S) bearer token | none |
 | `adbc.proxy.request_timeout_ms` | Timeout for each RPC | `30000` |
@@ -300,7 +360,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The external harness loads the compiled C ABI through the Python ADBC driver
-manager and tests real SQLite, DuckDB, and PostgreSQL drivers:
+manager. CI tests SQLite, DuckDB, PostgreSQL, MySQL, Flight SQL, DataFusion,
+Trino, and Microsoft SQL Server drivers:
 
 ```console
 dbc install "sqlite=1.12.0" --level user

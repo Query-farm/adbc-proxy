@@ -30,22 +30,32 @@ def main() -> None:
     token = os.environ.get("ADBC_PROXY_TOKEN", "")
     target = os.environ.get("ADBC_PROXY_TARGET", "sqlite")
     backend = os.environ.get("ADBC_PROXY_BACKEND", target)
-    if backend not in {"sqlite", "duckdb", "postgresql"}:
+    if backend not in {
+        "sqlite",
+        "duckdb",
+        "postgresql",
+        "mysql",
+        "flightsql",
+        "datafusion",
+        "trino",
+        "mssql",
+    }:
         raise RuntimeError(f"unsupported validation backend: {backend}")
 
     payload_type = "BYTEA" if backend == "postgresql" else "BLOB"
     placeholders = "$1, $2, $3" if backend == "postgresql" else "?, ?, ?"
 
     if token:
-        rejected = adbc_driver_manager.AdbcDatabase(
-            **{
-                "driver": str(proxy_driver),
-                "entrypoint": "AdbcDriverProxyInit",
-                "uri": endpoint,
-                "adbc.proxy.target": target,
-                "adbc.proxy.auth.bearer_token": f"{token}-invalid",
-            }
-        )
+        rejected_options = {
+            "driver": str(proxy_driver),
+            "entrypoint": "AdbcDriverProxyInit",
+            "adbc.proxy.uri": endpoint,
+            "adbc.proxy.target": target,
+            "adbc.proxy.auth.bearer_token": f"{token}-invalid",
+        }
+        if downstream_uri := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+            rejected_options["uri"] = downstream_uri
+        rejected = adbc_driver_manager.AdbcDatabase(**rejected_options)
         try:
             try:
                 rejected_connection = adbc_driver_manager.AdbcConnection(rejected)
@@ -60,11 +70,13 @@ def main() -> None:
     options = {
         "driver": str(proxy_driver),
         "entrypoint": "AdbcDriverProxyInit",
-        "uri": endpoint,
+        "adbc.proxy.uri": endpoint,
         "adbc.proxy.target": target,
     }
     if token:
         options["adbc.proxy.auth.bearer_token"] = token
+    if downstream_uri := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+        options["uri"] = downstream_uri
     if direct := os.environ.get("ADBC_PROXY_IROH_DIRECT_ADDRESS"):
         options["adbc.proxy.iroh.direct_address"] = direct
     tls_options = {
@@ -76,10 +88,70 @@ def main() -> None:
     for environment, option in tls_options.items():
         if value := os.environ.get(environment):
             options[option] = value
+
+    denied_options = dict(options)
+    denied_options["proxy.validation.disallowed"] = "must-not-reach-driver"
+    denied_database = adbc_driver_manager.AdbcDatabase(**denied_options)
+    try:
+        try:
+            denied_connection = adbc_driver_manager.AdbcConnection(denied_database)
+        except adbc_driver_manager.Error as error:
+            assert (
+                error.status_code
+                == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
+            )
+            assert "proxy.validation.disallowed" in str(error)
+            assert "must-not-reach-driver" not in str(error)
+        else:
+            denied_connection.close()
+            raise AssertionError("the service accepted a disallowed database option")
+    finally:
+        denied_database.close()
+
     database = adbc_driver_manager.AdbcDatabase(**options)
     try:
         connection = adbc_driver_manager.AdbcConnection(database)
         try:
+            try:
+                connection.set_options(
+                    **{"proxy.validation.disallowed": "must-not-reach-driver"}
+                )
+            except adbc_driver_manager.Error as error:
+                assert (
+                    error.status_code
+                    == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
+                )
+                assert "proxy.validation.disallowed" in str(error)
+                assert "must-not-reach-driver" not in str(error)
+            else:
+                raise AssertionError("the service accepted a disallowed connection option")
+
+            if backend in {"mysql", "flightsql", "datafusion", "trino", "mssql"}:
+                statement = adbc_driver_manager.AdbcStatement(connection)
+                try:
+                    statement.set_sql_query("SELECT 42 AS answer")
+                    table = read_all(statement)
+                    assert table.num_rows == 1
+                    assert table.column("answer").to_pylist() == [42]
+
+                    try:
+                        statement.set_sql_query(
+                            "SELECT * FROM adbc_proxy_table_that_does_not_exist"
+                        )
+                        read_all(statement)
+                    except adbc_driver_manager.Error:
+                        pass
+                    else:
+                        raise AssertionError("a downstream query error was not propagated")
+                finally:
+                    statement.close()
+                print(
+                    "PASS external ADBC driver-manager -> proxy dylib -> "
+                    f"VGI/{os.environ.get('ADBC_PROXY_TRANSPORT', 'http')} -> "
+                    f"proxy service -> {backend} ADBC"
+                )
+                return
+
             statement = adbc_driver_manager.AdbcStatement(connection)
             try:
                 statement.set_sql_query("DROP TABLE IF EXISTS proxy_validation")

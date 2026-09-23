@@ -22,7 +22,7 @@ def main() -> None:
     endpoint = required_env("ADBC_PROXY_ENDPOINT")
     target = required_env("ADBC_PROXY_TARGET")
     options = {
-        "uri": endpoint,
+        "adbc.proxy.uri": endpoint,
         "adbc.proxy.target": target,
     }
     optional_options = {

@@ -18,12 +18,12 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 backend=${ADBC_PROXY_BACKEND:-sqlite}
-if [[ $# -gt 0 && "$1" =~ ^(sqlite|duckdb|postgresql)$ ]]; then
+if [[ $# -gt 0 && "$1" =~ ^(sqlite|duckdb|postgresql|mysql|flightsql|datafusion|trino|mssql)$ ]]; then
   backend=$1
   shift
 fi
 case "$backend" in
-  sqlite|duckdb|postgresql) ;;
+  sqlite|duckdb|postgresql|mysql|flightsql|datafusion|trino|mssql) ;;
   *)
     echo "Unsupported validation backend: $backend" >&2
     exit 2
@@ -57,6 +57,11 @@ case "$backend" in
   sqlite) downstream_driver=${ADBC_SQLITE_DRIVER:-} ;;
   duckdb) downstream_driver=${ADBC_DUCKDB_DRIVER:-} ;;
   postgresql) downstream_driver=${ADBC_POSTGRESQL_DRIVER:-} ;;
+  mysql) downstream_driver=${ADBC_MYSQL_DRIVER:-} ;;
+  flightsql) downstream_driver=${ADBC_FLIGHTSQL_DRIVER:-} ;;
+  datafusion) downstream_driver=${ADBC_DATAFUSION_DRIVER:-} ;;
+  trino) downstream_driver=${ADBC_TRINO_DRIVER:-} ;;
+  mssql) downstream_driver=${ADBC_MSSQL_DRIVER:-} ;;
 esac
 if [[ -z "$downstream_driver" ]]; then
   downstream_driver=$(VALIDATION_BACKEND="$backend" python3 - <<'PY'
@@ -218,6 +223,31 @@ PY
       database_option_value="postgresql://postgres@127.0.0.1:$postgres_port/postgres"
     fi
     ;;
+  mysql)
+    entrypoint=""
+    database_option_key="uri"
+    database_option_value=${ADBC_MYSQL_URI:-mysql://root:root@127.0.0.1:3306/testdb}
+    ;;
+  flightsql)
+    entrypoint=""
+    database_option_key="uri"
+    database_option_value=${ADBC_FLIGHTSQL_URI:-grpc://127.0.0.1:31337}
+    ;;
+  datafusion)
+    entrypoint=""
+    database_option_key=""
+    database_option_value=""
+    ;;
+  trino)
+    entrypoint=""
+    database_option_key="uri"
+    database_option_value=${ADBC_TRINO_URI:-http://127.0.0.1:18080}
+    ;;
+  mssql)
+    entrypoint=""
+    database_option_key="uri"
+    database_option_value=${ADBC_MSSQL_URI:-sqlserver://sa:Adbc_Test_Pass123@127.0.0.1:1433}
+    ;;
 esac
 
 VALIDATION_CONFIG="$config" \
@@ -235,6 +265,9 @@ VALIDATION_DRIVER="$downstream_driver" \
 VALIDATION_ENTRYPOINT="$entrypoint" \
 VALIDATION_DATABASE_OPTION_KEY="$database_option_key" \
 VALIDATION_DATABASE_OPTION_VALUE="$database_option_value" \
+VALIDATION_FLIGHTSQL_USERNAME="${ADBC_FLIGHTSQL_USERNAME:-sqlflite_username}" \
+VALIDATION_FLIGHTSQL_PASSWORD="${ADBC_FLIGHTSQL_PASSWORD:-flight_password}" \
+VALIDATION_TRINO_USERNAME="${ADBC_TRINO_USERNAME:-trino}" \
 VALIDATION_MODE="$mode" \
 python3 - <<'PY'
 import json
@@ -305,18 +338,53 @@ endpoint_info_file = {quoted(os.environ["VALIDATION_IROH_INFO"])}
 disable_relays = true
 '''
 
+entrypoint = os.environ["VALIDATION_ENTRYPOINT"]
 contents += f'''
 
 [targets.{os.environ["VALIDATION_BACKEND"]}]
 driver = {quoted(os.environ["VALIDATION_DRIVER"])}
-entrypoint = {quoted(os.environ["VALIDATION_ENTRYPOINT"])}
 allow_client_database_options = false
-allow_client_connection_options = true
+allow_client_connection_options = false
+allowed_client_connection_options = [
+  "adbc.connection.autocommit",
+  "adbc.connection.readonly",
+  "adbc.connection.catalog",
+  "adbc.connection.db_schema",
+  "adbc.connection.transaction.isolation_level",
+]
+'''
+if entrypoint:
+    contents += f'entrypoint = {quoted(entrypoint)}\n'
+
+database_options = []
+client_database_option = (
+    os.environ["VALIDATION_DATABASE_OPTION_KEY"]
+    if os.environ["VALIDATION_BACKEND"] == "sqlite"
+    else ""
+)
+if client_database_option:
+    contents += f'allowed_client_database_options = [{quoted(client_database_option)}]\n'
+elif os.environ["VALIDATION_DATABASE_OPTION_KEY"]:
+    database_options.append(
+        (os.environ["VALIDATION_DATABASE_OPTION_KEY"], os.environ["VALIDATION_DATABASE_OPTION_VALUE"])
+    )
+if os.environ["VALIDATION_BACKEND"] == "flightsql":
+    database_options.extend(
+        [
+            ("username", os.environ["VALIDATION_FLIGHTSQL_USERNAME"]),
+            ("password", os.environ["VALIDATION_FLIGHTSQL_PASSWORD"]),
+        ]
+    )
+elif os.environ["VALIDATION_BACKEND"] == "trino":
+    database_options.append(("username", os.environ["VALIDATION_TRINO_USERNAME"]))
+
+for key, value in database_options:
+    contents += f'''
 
 [[targets.{os.environ["VALIDATION_BACKEND"]}.database_options]]
-key = {quoted(os.environ["VALIDATION_DATABASE_OPTION_KEY"])}
+key = {quoted(key)}
 type = "string"
-value = {quoted(os.environ["VALIDATION_DATABASE_OPTION_VALUE"])}
+value = {quoted(value)}
 '''
 Path(os.environ["VALIDATION_CONFIG"]).write_text(contents)
 PY
@@ -398,6 +466,11 @@ export ADBC_PROXY_TARGET="$target"
 export ADBC_PROXY_BACKEND="$backend"
 export ADBC_PROXY_TRANSPORT="$transport"
 export ADBC_PROXY_SERVER_PID="$server_pid"
+if [[ "$backend" == "sqlite" ]]; then
+  export ADBC_PROXY_DOWNSTREAM_URI="$database_option_value"
+else
+  unset ADBC_PROXY_DOWNSTREAM_URI || true
+fi
 
 case "$mode" in
   example)
@@ -421,7 +494,7 @@ case "$mode" in
       python "$validation_root/large_payload.py" "$@"
     ;;
   *)
-    echo "Usage: $0 [example|smoke|foundry|load|large-payload] [sqlite|duckdb|postgresql] [arguments...]" >&2
+    echo "Usage: $0 [example|smoke|foundry|load|large-payload] [sqlite|duckdb|postgresql|mysql|flightsql|datafusion|trino|mssql] [arguments...]" >&2
     exit 2
     ;;
 esac

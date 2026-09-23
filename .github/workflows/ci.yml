@@ -32,7 +32,7 @@ jobs:
     name: Rust quality gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
@@ -86,7 +86,7 @@ jobs:
       ADBC_POSTGRESQL_URI: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       ADBC_PROXY_TRANSPORT: ${{ matrix.transport }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
@@ -128,7 +128,7 @@ jobs:
           --junitxml=validation/foundry-results.xml
       - name: Upload Foundry results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: foundry-results-${{ matrix.backend }}-${{ matrix.transport }}
           path: validation/foundry-results.xml
@@ -185,7 +185,7 @@ jobs:
       ADBC_TRINO_USERNAME: trino
       ADBC_MSSQL_URI: sqlserver://sa:Adbc_Test_Pass123@127.0.0.1:1433
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1

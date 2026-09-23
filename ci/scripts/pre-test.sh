@@ -62,7 +62,10 @@ esac
 
 dbc install "$driver" --level user
 
-ADBC_PROXY_BACKEND="$service_name" \
+cargo build --locked --release --workspace
+
+ADBC_PROXY_SKIP_BUILD=1 \
+  ADBC_PROXY_BACKEND="$service_name" \
   ADBC_PROXY_ENV_FILE="$PWD/.env.override" \
   ./validation/run_external.sh serve "$service_name" &
 runner_pid=$!

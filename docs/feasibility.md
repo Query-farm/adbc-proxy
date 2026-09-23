@@ -87,5 +87,5 @@ The implementation was checked against:
 - [Apache Arrow ADBC at `616acfdf`](https://github.com/apache/arrow-adbc/tree/616acfdfcea9b66956fdb3d11437b6cf24edbc39), including the Rust ADBC 1.1 traits, FFI exporter, driver-manager discovery, structured errors, and cancellation handles.
 - [OpenTelemetry Rust OTLP exporter guidance](https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-otlp), used for the optional OTLP/HTTP trace pipeline.
 
-The workspace pins the ADBC Git revision and VGI-RPC 0.26.0 so the protocol
+The workspace pins the ADBC Git revision and VGI-RPC 0.27.0 so the protocol
 implementation is reproducible against the interfaces that were reviewed.

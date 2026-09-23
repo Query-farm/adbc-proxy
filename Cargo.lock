@@ -4669,9 +4669,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vgi-iroh-transport"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73d16234bd1f90ca2e176365dcc5fede86442d41f266633525c26e264e69dd65"
+checksum = "e856de6f7060cf4f2ed4d3e508e28a3d8d7c763ef4c9307746e0214b2a641428"
 dependencies = [
  "bytes",
  "http",
@@ -4686,9 +4686,9 @@ dependencies = [
 
 [[package]]
 name = "vgi-rpc"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "155776de4f910760ef2691d8a4a9ee02184e09d99207a309b9eeeff5202698b7"
+checksum = "376373eb46bf9cf6eb3d29b2ed0b889ed174ba6fc4f2c4459b8983df3d74728a"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -4728,9 +4728,9 @@ dependencies = [
 
 [[package]]
 name = "vgi-rpc-client"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8102a13ea475d78bf7a6af4dcf790c580d68ab91ecc3afaaa83d0083aa9832c"
+checksum = "fedee232514920cdcf5031ca0fe64df023c28ef78645aa7a3c3c5539d2bbbf60"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -4740,6 +4740,7 @@ dependencies = [
  "flate2",
  "libc",
  "reqwest 0.12.28",
+ "rustls",
  "serde_json",
  "sha2 0.10.9",
  "socket2",
@@ -4751,15 +4752,16 @@ dependencies = [
 
 [[package]]
 name = "vgi-rpc-iroh"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d52eeef5a3f4e2094d7fc4ef247ea193b2d9ac88355a92354e13762c130e76c1"
+checksum = "ef08fe33deac33736d25c13a06a018644da4f9fed39d4c00cf0886041518f9dc"
 dependencies = [
  "iroh",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "vgi-iroh-transport",
  "vgi-rpc",
  "vgi-rpc-client",
@@ -4767,9 +4769,9 @@ dependencies = [
 
 [[package]]
 name = "vgi-rpc-macros"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dec959f0bcd7b2e871bfc310f9dc802f4ca7aa1c3998c9de85ac0c1b144b628"
+checksum = "00b4fe36fd03182217d6a06a2d1b1a4d896beb5ecc88d62317cffcfc8c9762f1"
 dependencies = [
  "proc-macro2",
  "quote",

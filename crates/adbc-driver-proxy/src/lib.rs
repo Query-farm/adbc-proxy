@@ -3,13 +3,11 @@
 mod iroh_pool;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{Read, Write};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use adbc_core::error::{Error, Result, Status};
 use adbc_core::options::{
@@ -22,7 +20,8 @@ use adbc_proxy_protocol as protocol;
 use arrow_array::{Array, BinaryArray, Int64Array, RecordBatch, RecordBatchReader, StringArray};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use rustls::pki_types::pem::PemObject;
-use vgi_rpc_client::{HttpClient, Metadata, RpcClient, RpcError, Transport};
+use vgi_rpc_client::{HttpClient, Metadata, RpcClient, RpcError};
+use vgi_rpc_iroh::IrohTarget;
 
 pub const DRIVER_NAME: &str = "adbc_driver_proxy";
 pub const OPTION_PROXY_URI: &str = "adbc.proxy.uri";
@@ -652,25 +651,9 @@ impl ByteConnector {
     }
 
     fn connect_iroh(&self) -> Result<(RpcClient, Option<iroh_pool::Lease>)> {
-        let parsed = url::Url::parse(&self.endpoint).map_err(|_| invalid("invalid iroh:// URI"))?;
-        if parsed.scheme() != "iroh"
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.port().is_some()
-            || !matches!(parsed.path(), "" | "/")
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err(invalid(
-                "Iroh URI must be iroh://<endpoint-id> without credentials, port, path, query, or fragment",
-            ));
-        }
-        let remote_id = iroh::EndpointId::from_str(
-            parsed
-                .host_str()
-                .ok_or_else(|| invalid("Iroh endpoint ID is required"))?,
-        )
-        .map_err(|error| invalid(format!("invalid Iroh endpoint ID: {error}")))?;
+        let remote_id = IrohTarget::parse(&self.endpoint)
+            .map_err(|error| invalid(error.to_string()))?
+            .endpoint_id();
         let secret_key = self
             .options
             .iroh_secret_key
@@ -1457,89 +1440,6 @@ fn host_and_port(endpoint: &str, expected_scheme: &str) -> Result<(String, u16)>
     Ok((host, port))
 }
 
-type ClientTlsStream = rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>;
-
-struct LocalTlsTransport {
-    reader: TlsReader,
-    writer: TlsWriter,
-    reusable: Arc<AtomicBool>,
-}
-
-struct TlsReader {
-    stream: Arc<Mutex<ClientTlsStream>>,
-    reusable: Arc<AtomicBool>,
-}
-
-struct TlsWriter {
-    stream: Arc<Mutex<ClientTlsStream>>,
-    reusable: Arc<AtomicBool>,
-}
-
-impl Read for TlsReader {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let result = self
-            .stream
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .read(buffer);
-        if result.is_err() {
-            self.reusable.store(false, Ordering::Release);
-        }
-        result
-    }
-}
-
-impl Write for TlsWriter {
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        let result = self
-            .stream
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .write(buffer);
-        if result.is_err() {
-            self.reusable.store(false, Ordering::Release);
-        }
-        result
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        let result = self
-            .stream
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .flush();
-        if result.is_err() {
-            self.reusable.store(false, Ordering::Release);
-        }
-        result
-    }
-}
-
-impl Transport for LocalTlsTransport {
-    fn split(&mut self) -> (&mut dyn Read, &mut dyn Write) {
-        (&mut self.reader, &mut self.writer)
-    }
-
-    fn is_reusable(&self) -> bool {
-        self.reusable.load(Ordering::Acquire)
-    }
-
-    fn close(&mut self) -> std::result::Result<(), RpcError> {
-        self.reusable.store(false, Ordering::Release);
-        let mut stream = self
-            .writer
-            .stream
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        stream.conn.send_close_notify();
-        let _ = stream.flush();
-        stream
-            .sock
-            .shutdown(std::net::Shutdown::Both)
-            .map_err(|error| RpcError::new("TransportError", format!("close TLS socket: {error}")))
-    }
-}
-
 fn tls_tcp_client(
     host: &str,
     port: u16,
@@ -1575,70 +1475,15 @@ fn tls_tcp_client(
         .with_root_certificates(roots)
         .with_client_auth_cert(certificates, private_key)
         .map_err(|error| invalid(format!("invalid TLS client certificate or key: {error}")))?;
-    let server_name = rustls::pki_types::ServerName::try_from(server_name.to_string())
-        .map_err(|_| invalid("invalid TLS server name"))?;
-    let socket = std::net::TcpStream::connect((host, port))
-        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-    socket
-        .set_nodelay(true)
-        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-    socket
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-    socket
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-    let connection = rustls::ClientConnection::new(Arc::new(config), server_name)
-        .map_err(|error| internal(format!("create TLS connection: {error}")))?;
-    let mut stream = rustls::StreamOwned::new(connection, socket);
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or_else(|| invalid("TLS handshake timeout exceeds Instant"))?;
-    while stream.conn.is_handshaking() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(Error::with_message_and_status(
-                "TLS handshake timed out",
-                Status::IO,
-            ));
-        }
-        stream
-            .sock
-            .set_read_timeout(Some(remaining))
-            .and_then(|()| stream.sock.set_write_timeout(Some(remaining)))
-            .map_err(|error| {
-                Error::with_message_and_status(
-                    format!("configure TLS handshake timeout: {error}"),
-                    Status::IO,
-                )
-            })?;
-        stream.conn.complete_io(&mut stream.sock).map_err(|error| {
-            Error::with_message_and_status(format!("TLS handshake failed: {error}"), Status::IO)
-        })?;
-    }
-    stream
-        .sock
-        .set_read_timeout(Some(timeout))
-        .and_then(|()| stream.sock.set_write_timeout(Some(timeout)))
-        .map_err(|error| {
-            Error::with_message_and_status(
-                format!("configure TLS I/O timeout: {error}"),
-                Status::IO,
-            )
-        })?;
-    let stream = Arc::new(Mutex::new(stream));
-    let reusable = Arc::new(AtomicBool::new(true));
-    Ok(RpcClient::from_transport(Box::new(LocalTlsTransport {
-        reader: TlsReader {
-            stream: Arc::clone(&stream),
-            reusable: Arc::clone(&reusable),
-        },
-        writer: TlsWriter {
-            stream,
-            reusable: Arc::clone(&reusable),
-        },
-        reusable,
-    })))
+    RpcClient::tls_tcp_connect(
+        host,
+        port,
+        server_name,
+        Arc::new(config),
+        timeout,
+        Some(timeout),
+    )
+    .map_err(rpc_error)
 }
 
 fn read_certificates(path: &str) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {

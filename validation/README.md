@@ -1,0 +1,139 @@
+# External ADBC validation
+
+This directory validates the complete deployed path rather than instantiating
+the Rust proxy types in-process:
+
+```text
+Python ADBC driver manager
+  -> libadbc_driver_proxy (exported C ABI)
+  -> VGI RPC over HTTP, TCP, mTLS TCP, or raw Iroh
+  -> adbc-proxy-server
+  -> dynamically loaded SQLite, DuckDB, or PostgreSQL ADBC driver
+  -> downstream database
+```
+
+## Prerequisites
+
+- Rust 1.97 or newer
+- Python 3.13 and [`uv`](https://docs.astral.sh/uv/)
+- `curl`
+- [`dbc`](https://docs.columnar.tech/dbc/) with the validation drivers installed:
+
+  ```sh
+  dbc install "sqlite=1.12.0" --level user
+  dbc install "duckdb=1.5.5" --level user
+  dbc install "postgresql=1.12.0" --level user
+  ```
+
+`run_external.sh` discovers the selected driver's user-level manifest installed
+by `dbc`. On other systems, or in CI, its absolute library path can be supplied
+with `ADBC_SQLITE_DRIVER`, `ADBC_DUCKDB_DRIVER`, or
+`ADBC_POSTGRESQL_DRIVER`. PostgreSQL uses `ADBC_POSTGRESQL_URI` when supplied;
+otherwise the script creates a disposable local cluster with `initdb` and
+`pg_ctl`. Driver installation is deliberately separate from test execution so
+CI can cache or provision pinned artifacts.
+
+## Commands
+
+Run the deterministic external smoke test:
+
+```sh
+./validation/run_external.sh smoke sqlite
+./validation/run_external.sh smoke duckdb
+./validation/run_external.sh smoke postgresql
+```
+
+Select a non-HTTP transport with `ADBC_PROXY_TRANSPORT=tcp`, `mtls`, or
+`iroh`. The harness generates short-lived test certificates for mTLS. For
+example:
+
+```sh
+ADBC_PROXY_TRANSPORT=tcp ./validation/run_external.sh foundry sqlite -q
+ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
+ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh foundry sqlite -q
+```
+
+Run the official ADBC Driver Foundry connection, query, and statement tests:
+
+```sh
+./validation/run_external.sh foundry sqlite
+./validation/run_external.sh foundry duckdb
+./validation/run_external.sh foundry postgresql
+```
+
+Run concurrent end-to-end load through the exported C ABI:
+
+```sh
+ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh load duckdb \
+  --workers 32 --iterations 50 --rows 200000 \
+  --query-rows 2048 --payload-bytes 128 \
+  --json-output validation/load-results/duckdb-mtls.json
+
+ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load postgresql \
+  --workers 32 --duration-seconds 60 --rows 200000
+```
+
+Each worker opens an independent ordinary ADBC database, connection, and
+statement through the proxy, synchronizes with the other workers, then pulls
+and validates Arrow results repeatedly. Reports include connection latency,
+query p50/p95/p99/max latency, queries/rows/MiB per second, record-batch counts,
+errors, and proxy-process RSS. Fixed-iteration mode is useful for regression
+gates; `--duration-seconds` provides sustained-load and soak profiles.
+
+Additional pytest arguments are forwarded, for example:
+
+```sh
+./validation/run_external.sh foundry postgresql \
+  -k 'test_get_statistics or test_execute_schema'
+```
+
+Set `ADBC_PROXY_SKIP_BUILD=1` to reuse release artifacts produced by a prior CI
+build step. Every run uses isolated downstream state and dynamically selected
+loopback ports. HTTP uses a static token, mTLS uses a generated SPIFFE client
+identity, and raw Iroh uses a generated endpoint key; plaintext TCP is limited
+to this local validation profile. The temporary service and locally created
+PostgreSQL cluster are terminated on exit.
+
+## CI job split
+
+The separate `external-validation` job:
+
+1. restores/caches the Rust build and `uv` caches;
+2. installs the matrix driver's pinned version with `dbc`;
+3. runs the smoke test against SQLite, DuckDB, and PostgreSQL;
+4. runs a small concurrent mTLS load gate so the harness cannot silently rot;
+5. runs Foundry against all three and archives each pytest result.
+
+The Python manager and Arrow versions are pinned in `pyproject.toml`. The
+Foundry dependency is pinned to commit
+`3c67c7b9ea9a3e4ab714bad828e373b614c41910`, the revision actually adapted by
+this harness.
+
+See [`RESULTS.md`](RESULTS.md) for the exact environment, commands, pass/skip
+counts, and remaining conformance gaps from the latest run.
+
+## Scope
+
+The smoke tests cover C-ABI dynamic loading, proxy/database initialization,
+authentication, target selection, downstream dynamic loading, DDL and DML row
+counts, Unicode and binary/null values, prepare, query execution, and Arrow
+stream import. It also verifies Arrow parameter binding, rollback/commit
+visibility, rejected authentication, and preservation of a downstream ADBC
+error status through the C ABI. Foundry tests broaden connection metadata,
+SQL/type, bind-stream, transaction, and statement coverage and explicitly skip
+capabilities not declared by each proxy/backend adapter. DuckDB and PostgreSQL
+exercise execute-schema through the proxy; DuckDB also exercises statistics,
+while PostgreSQL statistics run after `ANALYZE` so the downstream driver can
+return approximate values.
+
+Apache's C++ validation library is a source library, not a standalone runner:
+each driver must provide a `DriverQuirks` fixture and link GoogleTest and
+nanoarrow. The Foundry adapter provides the immediately runnable official
+suite here. C++ fixtures are still worthwhile for lifecycle and error cases
+not covered by Foundry and should declare each downstream driver's
+optional-feature and type quirks explicitly.
+
+The load harness is deliberately not a universal database benchmark. It runs
+the proxy and client on the same host, and proxy RSS includes any in-process
+downstream engine such as DuckDB or SQLite. Use dedicated client, proxy, and
+database hosts before treating throughput numbers as deployment capacity.

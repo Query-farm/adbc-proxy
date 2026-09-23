@@ -1,0 +1,398 @@
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+
+use adbc_proxy_protocol::WireOption;
+use serde::Deserialize;
+
+use crate::session::{SessionLimits, TargetAuthorizer};
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    #[serde(default)]
+    pub server: ServerConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    pub tcp: Option<TcpConfig>,
+    pub iroh: Option<IrohConfig>,
+    #[serde(default)]
+    pub targets: HashMap<String, TargetConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TcpConfig {
+    pub listen: SocketAddr,
+    #[serde(default)]
+    pub allow_insecure: bool,
+    pub tls: Option<TcpTlsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TcpTlsConfig {
+    pub server_certificate_chain: PathBuf,
+    pub server_private_key: PathBuf,
+    pub client_ca: PathBuf,
+    pub trust_domains: Vec<String>,
+    #[serde(default = "default_tls_handshake_timeout_seconds")]
+    pub handshake_timeout_seconds: u64,
+}
+
+const fn default_tls_handshake_timeout_seconds() -> u64 {
+    5
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IrohConfig {
+    pub issuer: String,
+    pub secret_key_file: PathBuf,
+    /// Optional JSON discovery record written after the endpoint binds. It
+    /// contains the endpoint ID and currently advertised direct addresses.
+    pub endpoint_info_file: Option<PathBuf>,
+    #[serde(default)]
+    pub principals: HashMap<String, String>,
+    #[serde(default)]
+    pub disable_relays: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServerConfig {
+    pub listen: SocketAddr,
+    pub session_ttl_seconds: u64,
+    pub session_reap_interval_seconds: u64,
+    pub require_authentication: bool,
+    /// The current binary serves plaintext HTTP. Binding beyond loopback
+    /// requires explicit acknowledgement, normally because a TLS-terminating
+    /// sidecar or private service mesh protects the listener.
+    pub allow_insecure_remote: bool,
+    pub request_timeout_seconds: u64,
+    pub max_request_body_bytes: usize,
+    pub max_sessions: usize,
+    pub max_sessions_per_principal: usize,
+    pub max_statements_per_session: usize,
+    pub max_results_per_session: usize,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            listen: "127.0.0.1:8080".parse().expect("valid default address"),
+            session_ttl_seconds: 3600,
+            session_reap_interval_seconds: 30,
+            require_authentication: true,
+            allow_insecure_remote: false,
+            request_timeout_seconds: 300,
+            max_request_body_bytes: 64 * 1024 * 1024,
+            max_sessions: 1024,
+            max_sessions_per_principal: 32,
+            max_statements_per_session: 64,
+            max_results_per_session: 64,
+        }
+    }
+}
+
+impl ServerConfig {
+    pub fn session_limits(&self) -> SessionLimits {
+        SessionLimits {
+            max_sessions: self.max_sessions,
+            max_sessions_per_principal: self.max_sessions_per_principal,
+            max_statements_per_session: self.max_statements_per_session,
+            max_results_per_session: self.max_results_per_session,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthConfig {
+    pub static_bearer_tokens: HashMap<String, String>,
+    pub jwt: Option<JwtAuthConfig>,
+    /// Principal-to-target allowlist. If omitted, all principals may use all
+    /// targets. Once any rule is present, an unlisted principal is denied. A
+    /// target value of `"*"` grants every configured target.
+    pub target_permissions: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JwtAuthConfig {
+    pub issuer: String,
+    pub audience: String,
+    pub jwks_url: String,
+    #[serde(default = "default_principal_claim")]
+    pub principal_claim: String,
+    #[serde(default = "default_jwks_refresh_seconds")]
+    pub refresh_interval_seconds: u64,
+    #[serde(default = "default_jwt_leeway_seconds")]
+    pub leeway_seconds: u64,
+}
+
+fn default_principal_claim() -> String {
+    "sub".to_string()
+}
+
+const fn default_jwks_refresh_seconds() -> u64 {
+    600
+}
+
+const fn default_jwt_leeway_seconds() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetConfig {
+    pub driver: String,
+    pub entrypoint: Option<String>,
+    #[serde(default)]
+    pub database_options: Vec<WireOption>,
+    #[serde(default)]
+    pub connection_options: Vec<WireOption>,
+    #[serde(default)]
+    pub allow_client_database_options: bool,
+    #[serde(default)]
+    pub allow_client_connection_options: bool,
+}
+
+impl Config {
+    pub fn from_path(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let contents = std::fs::read_to_string(path)?;
+        Self::from_toml(&contents)
+    }
+
+    pub fn from_toml(contents: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let config: Self = toml::from_str(contents)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn target_authorizer(&self) -> TargetAuthorizer {
+        TargetAuthorizer::new(self.auth.target_permissions.clone())
+    }
+
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.targets.is_empty() {
+            return Err("configuration must define at least one target".into());
+        }
+        if self.server.session_ttl_seconds == 0 {
+            return Err("server.session_ttl_seconds must be positive".into());
+        }
+        if self.server.session_reap_interval_seconds == 0 {
+            return Err("server.session_reap_interval_seconds must be positive".into());
+        }
+        if self.server.request_timeout_seconds == 0 {
+            return Err("server.request_timeout_seconds must be positive".into());
+        }
+        if self.server.max_request_body_bytes == 0 {
+            return Err("server.max_request_body_bytes must be positive".into());
+        }
+        self.server
+            .session_limits()
+            .validate()
+            .map_err(|message| -> Box<dyn std::error::Error> { message.into() })?;
+
+        if !self.server.listen.ip().is_loopback() && !self.server.allow_insecure_remote {
+            return Err(format!(
+                "refusing plaintext HTTP listener {} outside loopback; terminate TLS in front of a loopback listener or set server.allow_insecure_remote=true to acknowledge the risk",
+                self.server.listen
+            )
+            .into());
+        }
+
+        if let Some(tcp) = &self.tcp {
+            if tcp.tls.is_none() && !tcp.listen.ip().is_loopback() && !tcp.allow_insecure {
+                return Err(format!(
+                    "refusing plaintext TCP listener {} outside loopback; configure tcp.tls or set tcp.allow_insecure=true to acknowledge the risk",
+                    tcp.listen
+                )
+                .into());
+            }
+            if self.server.require_authentication && tcp.tls.is_none() {
+                return Err(
+                    "authenticated raw TCP requires tcp.tls with mandatory client certificates"
+                        .into(),
+                );
+            }
+            if let Some(tls) = &tcp.tls
+                && (tls.trust_domains.is_empty() || tls.handshake_timeout_seconds == 0)
+            {
+                return Err(
+                    "TCP mTLS requires at least one trust domain and a positive handshake timeout"
+                        .into(),
+                );
+            }
+        }
+        if let Some(iroh) = &self.iroh {
+            if iroh.issuer.trim().is_empty() {
+                return Err("Iroh issuer must not be blank".into());
+            }
+            if self.server.require_authentication && iroh.principals.is_empty() {
+                return Err(
+                    "authenticated Iroh requires at least one endpoint-to-principal mapping".into(),
+                );
+            }
+            for (endpoint, principal) in &iroh.principals {
+                if endpoint.len() != 64
+                    || !endpoint
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    || principal.trim().is_empty()
+                {
+                    return Err(
+                        "Iroh principal keys must be 64 lowercase hex endpoint IDs and principals must not be blank"
+                            .into(),
+                    );
+                }
+            }
+        }
+
+        if !self.auth.static_bearer_tokens.is_empty() && self.auth.jwt.is_some() {
+            return Err(
+                "configure either static bearer tokens or JWT authentication, not both".into(),
+            );
+        }
+        if self.server.require_authentication
+            && self.auth.static_bearer_tokens.is_empty()
+            && self.auth.jwt.is_none()
+        {
+            return Err("authentication is required but no static bearer tokens or JWT provider are configured".into());
+        }
+        for (token, principal) in &self.auth.static_bearer_tokens {
+            if token.trim().is_empty() || principal.trim().is_empty() {
+                return Err("static bearer tokens and principals must not be blank".into());
+            }
+        }
+        if let Some(jwt) = &self.auth.jwt {
+            if jwt.issuer.trim().is_empty()
+                || jwt.audience.trim().is_empty()
+                || jwt.jwks_url.trim().is_empty()
+                || jwt.principal_claim.trim().is_empty()
+            {
+                return Err(
+                    "JWT issuer, audience, JWKS URL, and principal claim must not be blank".into(),
+                );
+            }
+            if !jwt.issuer.starts_with("https://") || !jwt.jwks_url.starts_with("https://") {
+                return Err("JWT issuer and JWKS URL must use HTTPS".into());
+            }
+            if jwt.refresh_interval_seconds == 0 {
+                return Err("JWT refresh interval must be positive".into());
+            }
+        }
+
+        let target_names: HashSet<&str> = self.targets.keys().map(String::as_str).collect();
+        for (principal, targets) in &self.auth.target_permissions {
+            if principal.trim().is_empty() {
+                return Err("target permission principals must not be blank".into());
+            }
+            if targets.is_empty() {
+                return Err(
+                    format!("target permission for {principal:?} must not be empty").into(),
+                );
+            }
+            for target in targets {
+                if target != "*" && !target_names.contains(target.as_str()) {
+                    return Err(format!(
+                        "target permission for {principal:?} references unknown target {target:?}"
+                    )
+                    .into());
+                }
+            }
+        }
+        for (name, target) in &self.targets {
+            if name.trim().is_empty() || target.driver.trim().is_empty() {
+                return Err("target names and driver names must not be blank".into());
+            }
+            validate_options(name, "database", &target.database_options)?;
+            validate_options(name, "connection", &target.connection_options)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_options(
+    target: &str,
+    kind: &str,
+    options: &[WireOption],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut keys = HashSet::new();
+    for option in options {
+        if option.key.trim().is_empty() {
+            return Err(format!("target {target:?} has a blank {kind} option key").into());
+        }
+        if !keys.insert(&option.key) {
+            return Err(format!("target {target:?} repeats {kind} option {:?}", option.key).into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    const TARGET: &str = r#"
+[targets.sqlite]
+driver = "adbc_driver_sqlite"
+"#;
+
+    #[test]
+    fn rejects_unknown_fields_and_missing_authentication() {
+        let unknown = format!("[server]\nunknown = true\n{TARGET}");
+        assert!(Config::from_toml(&unknown).is_err());
+        assert!(Config::from_toml(TARGET).is_err());
+    }
+
+    #[test]
+    fn validates_permissions_and_remote_plaintext() {
+        let unknown_target = format!(
+            "[server]\nrequire_authentication = false\n\n[auth.target_permissions]\nalice = [\"missing\"]\n{TARGET}"
+        );
+        assert!(Config::from_toml(&unknown_target).is_err());
+
+        let remote = format!(
+            "[server]\nlisten = \"0.0.0.0:8080\"\nrequire_authentication = false\n{TARGET}"
+        );
+        assert!(Config::from_toml(&remote).is_err());
+    }
+
+    #[test]
+    fn accepts_bounded_static_and_jwt_configurations() {
+        let static_auth = format!(
+            "[auth.static_bearer_tokens]\ntoken = \"alice\"\n\n[auth.target_permissions]\nalice = [\"sqlite\"]\n{TARGET}"
+        );
+        assert!(Config::from_toml(&static_auth).is_ok());
+
+        let jwt = format!(
+            "[auth.jwt]\nissuer = \"https://issuer.example/\"\naudience = \"adbc-proxy\"\njwks_url = \"https://issuer.example/.well-known/jwks.json\"\n{TARGET}"
+        );
+        assert!(Config::from_toml(&jwt).is_ok());
+    }
+
+    #[test]
+    fn validates_persistent_transport_authentication() {
+        let unauthenticated_tcp = format!(
+            "[tcp]\nlisten = \"127.0.0.1:9400\"\n\n[auth.static_bearer_tokens]\ntoken = \"alice\"\n{TARGET}"
+        );
+        assert!(Config::from_toml(&unauthenticated_tcp).is_err());
+
+        let mtls = format!(
+            "[tcp]\nlisten = \"127.0.0.1:9400\"\n\n[tcp.tls]\nserver_certificate_chain = \"server.pem\"\nserver_private_key = \"server-key.pem\"\nclient_ca = \"ca.pem\"\ntrust_domains = [\"example.org\"]\n\n[auth.static_bearer_tokens]\ntoken = \"alice\"\n{TARGET}"
+        );
+        assert!(Config::from_toml(&mtls).is_ok());
+
+        let unmapped_iroh = format!(
+            "[iroh]\nissuer = \"example.org\"\nsecret_key_file = \"iroh.key\"\n\n[auth.static_bearer_tokens]\ntoken = \"alice\"\n{TARGET}"
+        );
+        assert!(Config::from_toml(&unmapped_iroh).is_err());
+
+        let mapped_iroh = format!(
+            "[iroh]\nissuer = \"example.org\"\nsecret_key_file = \"iroh.key\"\n\n[iroh.principals]\n\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" = \"alice\"\n\n[auth.static_bearer_tokens]\ntoken = \"alice\"\n{TARGET}"
+        );
+        assert!(Config::from_toml(&mapped_iroh).is_ok());
+    }
+}

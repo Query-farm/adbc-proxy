@@ -1,0 +1,6 @@
+/target
+.ruff_cache/
+*.dylib
+*.so
+*.dll
+.DS_Store

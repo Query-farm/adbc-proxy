@@ -1,0 +1,617 @@
+{
+  "arrow_bytes": 917504000,
+  "backend": "postgresql",
+  "batches": 3200,
+  "connect_latency_ms": {
+    "max": 267.87587511353195,
+    "p50": 252.37758294679224,
+    "p95": 266.89812494441867
+  },
+  "dataset_rows": 200000,
+  "duration_target_seconds": null,
+  "errors": [],
+  "iterations_per_worker": 50,
+  "latency_ms": {
+    "max": 666.4931660052389,
+    "mean": 136.75201737249154,
+    "min": 6.69691595248878,
+    "p50": 93.27233303338289,
+    "p95": 389.27641697227955,
+    "p99": 528.8214168976992
+  },
+  "measured_seconds": 7.376122584100813,
+  "mib_per_second": 118.62601116283739,
+  "payload_bytes": 128,
+  "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+  "prepare_seconds": 0.21578233409672976,
+  "queries": 3200,
+  "queries_per_second": 433.83226939551963,
+  "query_rows": 2048,
+  "rows": 6553600,
+  "rows_per_second": 888488.4877220242,
+  "server_rss_mib": {
+    "last": 97.9375,
+    "max": 99.375,
+    "min": 13.296875
+  },
+  "transport": "mtls",
+  "worker_results": [
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2666583750396967,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 0
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26694437488913536,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 1
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26689812494441867,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 2
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24436862510628998,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 3
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26608462492004037,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 4
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2545276249293238,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 5
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2525465830694884,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 6
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2677562499884516,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 7
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2608128748834133,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 8
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26142787490971386,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 9
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2657410411629826,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 10
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24945779191330075,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 11
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26787587511353195,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 12
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26126766693778336,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 13
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.261634792201221,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 14
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26621295884251595,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 15
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24304495798423886,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 16
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26633841707371175,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 17
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.1831739170011133,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 18
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2652112909127027,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 19
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.1732199159450829,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 20
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2509757080115378,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 21
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2609771250281483,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 22
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2438268328551203,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 23
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2484818750526756,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 24
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.23555675009265542,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 25
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.1698383328039199,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 26
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.25237758294679224,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 27
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24844800005666912,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 28
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24790183315053582,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 29
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.17139487504027784,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 30
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.1717987081501633,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 31
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2521491670049727,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 32
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24319833400659263,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 33
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.25999312521889806,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 34
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2595573328435421,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 35
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.21027154102921486,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 36
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26035399991087615,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 37
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.23429041705094278,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 38
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.19807820790447295,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 39
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.19093454186804593,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 40
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24148974986746907,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 41
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.25889416597783566,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 42
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.23568425001576543,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 43
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24092437489889562,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 44
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2589102918282151,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 45
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24686733284033835,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 46
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.24078404204919934,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 47
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2640646668151021,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 48
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2626953339204192,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 49
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.22607245901599526,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 50
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26357237505726516,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 51
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26220262493006885,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 52
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.23192254197783768,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 53
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26255637500435114,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 54
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2620477080345154,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 55
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2594656660221517,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 56
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2331634578295052,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 57
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2624635419342667,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 58
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.26167716598138213,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 59
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2519161249510944,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 60
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2618261252064258,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 61
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.22532954206690192,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 62
+    },
+    {
+      "batches": 50,
+      "bytes": 14336000,
+      "connect_seconds": 0.2329707918688655,
+      "error": null,
+      "queries": 50,
+      "rows": 102400,
+      "worker": 63
+    }
+  ],
+  "workers": 64
+}

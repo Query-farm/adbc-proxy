@@ -1,0 +1,71 @@
+[server]
+listen = "127.0.0.1:8080"
+session_ttl_seconds = 3600
+session_reap_interval_seconds = 30
+require_authentication = true
+# This binary currently serves plaintext HTTP. Keep the listener on loopback
+# behind a TLS terminator. Setting this true only acknowledges the risk; it
+# does not enable TLS.
+allow_insecure_remote = false
+request_timeout_seconds = 300
+max_request_body_bytes = 67108864
+max_sessions = 1024
+max_sessions_per_principal = 32
+max_statements_per_session = 64
+max_results_per_session = 64
+
+# Optional persistent VGI listener. Plain `tcp://` is permitted only on
+# loopback unless allow_insecure=true, and cannot authenticate bearer tokens.
+# [tcp]
+# listen = "0.0.0.0:9400"
+# allow_insecure = false
+#
+# [tcp.tls]
+# server_certificate_chain = "/run/secrets/server-chain.pem"
+# server_private_key = "/run/secrets/server-key.pem"
+# client_ca = "/run/secrets/workload-ca.pem"
+# trust_domains = ["prod.example.org"]
+# handshake_timeout_seconds = 5
+
+# Optional raw stateful VGI-over-Iroh listener. The secret key must persist
+# across restarts or the server's endpoint ID changes. The endpoint-info file
+# is useful for service discovery and contains no secret material.
+# [iroh]
+# issuer = "production"
+# secret_key_file = "/run/secrets/iroh-secret-key"
+# endpoint_info_file = "/run/adbc-proxy/iroh-endpoint.json"
+# disable_relays = false
+#
+# [iroh.principals]
+# "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" = "developer@example.com"
+
+# Development-only static bearer token. Production deployments should use
+# JWT/JWKS or workload identity and should inject this value through a secret
+# manager rather than committing it here.
+[auth.static_bearer_tokens]
+development-token = "developer@example.com"
+
+# Once this table contains any entries, principals not listed here are denied
+# every target. Use ["*"] only for an intentionally unrestricted principal.
+[auth.target_permissions]
+"developer@example.com" = ["sqlite"]
+
+# Production alternative to static_bearer_tokens (configure one, not both):
+# [auth.jwt]
+# issuer = "https://identity.example.com/"
+# audience = "adbc-proxy"
+# jwks_url = "https://identity.example.com/.well-known/jwks.json"
+# principal_claim = "sub"
+# refresh_interval_seconds = 600
+# leeway_seconds = 30
+
+[targets.sqlite]
+driver = "adbc_driver_sqlite"
+entrypoint = "AdbcDriverSqliteInit"
+allow_client_database_options = false
+allow_client_connection_options = false
+
+[[targets.sqlite.database_options]]
+key = "uri"
+type = "string"
+value = ":memory:"

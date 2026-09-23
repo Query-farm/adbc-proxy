@@ -1,0 +1,709 @@
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
+
+use adbc_core::error::{Result as AdbcResult, Status};
+use adbc_core::options::{
+    InfoCode, ObjectDepth, OptionConnection, OptionDatabase, OptionStatement, OptionValue,
+};
+use adbc_core::{
+    CancelHandle, Connection, Database, Driver, Optionable, PartitionedResult, Statement,
+};
+use adbc_driver_proxy::{
+    OPTION_BEARER_TOKEN, OPTION_IROH_DIRECT_ADDRESS, OPTION_TARGET, OPTION_TLS_CA, OPTION_TLS_CERT,
+    OPTION_TLS_KEY, OPTION_TLS_SERVER_NAME, ProxyDriver,
+};
+use adbc_proxy_server::backend::{Backend, BackendConnection, BackendStatement};
+use adbc_proxy_server::config::TargetConfig;
+use adbc_proxy_server::service::build_server;
+use adbc_proxy_server::session::SessionManager;
+use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator, RecordBatchReader, StringArray};
+use arrow_schema::{DataType, Field, Schema};
+use vgi_rpc::AuthContext;
+use vgi_rpc::auth::bearer::bearer_authenticate_static;
+use vgi_rpc::http::HttpState;
+use vgi_rpc::tcp::{
+    TcpIdentityOptions, TcpMutualTlsConfig, TcpMutualTlsOptions, serve_tcp,
+    serve_tcp_with_mtls_identity,
+};
+use vgi_rpc_iroh::{CancellationToken, IrohServer, IrohServerOptions, VGI_IROH_ALPN};
+
+#[derive(Default)]
+struct FakeBackend;
+
+impl Backend for FakeBackend {
+    fn open(
+        &self,
+        _target: &TargetConfig,
+        _database_options: Vec<(String, OptionValue)>,
+        _connection_options: Vec<(String, OptionValue)>,
+    ) -> AdbcResult<Box<dyn BackendConnection>> {
+        Ok(Box::new(FakeConnection))
+    }
+}
+
+struct FakeConnection;
+
+impl BackendConnection for FakeConnection {
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+        Arc::new(FakeCancel)
+    }
+
+    fn new_statement(&mut self) -> AdbcResult<Box<dyn BackendStatement>> {
+        Ok(Box::new(FakeStatement::default()))
+    }
+
+    fn set_option(&mut self, _key: &str, _value: OptionValue) -> AdbcResult<()> {
+        Ok(())
+    }
+    fn get_option_string(&self, _key: &str) -> AdbcResult<String> {
+        Ok("fake".into())
+    }
+    fn get_option_bytes(&self, _key: &str) -> AdbcResult<Vec<u8>> {
+        Ok(vec![1, 2])
+    }
+    fn get_option_int(&self, _key: &str) -> AdbcResult<i64> {
+        Ok(42)
+    }
+    fn get_option_double(&self, _key: &str) -> AdbcResult<f64> {
+        Ok(4.5)
+    }
+
+    fn get_info(
+        &self,
+        _codes: Option<HashSet<InfoCode>>,
+    ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        string_reader("info", "fake")
+    }
+
+    fn get_objects(
+        &self,
+        _depth: ObjectDepth,
+        _catalog: Option<&str>,
+        _db_schema: Option<&str>,
+        _table_name: Option<&str>,
+        _table_type: Option<Vec<&str>>,
+        _column_name: Option<&str>,
+    ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        string_reader("object", "test")
+    }
+
+    fn get_table_schema(
+        &self,
+        _catalog: Option<&str>,
+        _db_schema: Option<&str>,
+        _table_name: &str,
+    ) -> AdbcResult<Schema> {
+        Ok(value_schema().as_ref().clone())
+    }
+
+    fn get_table_types(&self) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        string_reader("table_type", "TABLE")
+    }
+
+    fn get_statistic_names(&self) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        string_reader("statistic_name", "row_count")
+    }
+
+    fn get_statistics(
+        &self,
+        _catalog: Option<&str>,
+        _db_schema: Option<&str>,
+        _table_name: Option<&str>,
+        _approximate: bool,
+    ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        string_reader("statistic", "rows")
+    }
+
+    fn commit(&mut self) -> AdbcResult<()> {
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> AdbcResult<()> {
+        Ok(())
+    }
+
+    fn read_partition(
+        &self,
+        _partition: &[u8],
+    ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        value_reader(vec![9])
+    }
+}
+
+#[derive(Default)]
+struct FakeStatement {
+    sql: Option<String>,
+    bound_rows: usize,
+}
+
+struct FakeCancel;
+
+impl CancelHandle for FakeCancel {
+    fn try_cancel(&self) -> AdbcResult<()> {
+        Ok(())
+    }
+}
+
+impl BackendStatement for FakeStatement {
+    fn set_option(&mut self, _key: &str, _value: OptionValue) -> AdbcResult<()> {
+        Ok(())
+    }
+    fn get_option_string(&self, _key: &str) -> AdbcResult<String> {
+        Ok("fake".into())
+    }
+    fn get_option_bytes(&self, _key: &str) -> AdbcResult<Vec<u8>> {
+        Ok(vec![3, 4])
+    }
+    fn get_option_int(&self, _key: &str) -> AdbcResult<i64> {
+        Ok(11)
+    }
+    fn get_option_double(&self, _key: &str) -> AdbcResult<f64> {
+        Ok(1.5)
+    }
+
+    fn bind(&mut self, batch: RecordBatch) -> AdbcResult<()> {
+        self.bound_rows = batch.num_rows();
+        Ok(())
+    }
+
+    fn bind_stream(&mut self, mut reader: Box<dyn RecordBatchReader + Send>) -> AdbcResult<()> {
+        self.bound_rows = reader.try_fold(0, |rows, batch| {
+            Ok::<_, arrow_schema::ArrowError>(rows + batch?.num_rows())
+        })?;
+        Ok(())
+    }
+
+    fn set_sql_query(&mut self, query: &str) -> AdbcResult<()> {
+        self.sql = Some(query.to_string());
+        Ok(())
+    }
+
+    fn prepare(&mut self) -> AdbcResult<()> {
+        Ok(())
+    }
+
+    fn set_substrait_plan(&mut self, _plan: &[u8]) -> AdbcResult<()> {
+        Ok(())
+    }
+
+    fn execute(&mut self) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        assert_eq!(self.sql.as_deref(), Some("select value from test"));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "value",
+            DataType::Int64,
+            false,
+        )]));
+        let batches = vec![
+            Ok(RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(Int64Array::from(vec![1, 2]))],
+            )?),
+            Ok(RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(Int64Array::from(vec![3, 4]))],
+            )?),
+        ];
+        Ok(Box::new(RecordBatchIterator::new(
+            batches.into_iter(),
+            schema,
+        )))
+    }
+
+    fn execute_update(&mut self) -> AdbcResult<Option<i64>> {
+        Ok(Some(if self.bound_rows == 0 {
+            7
+        } else {
+            self.bound_rows as i64
+        }))
+    }
+
+    fn execute_schema(&mut self) -> AdbcResult<Schema> {
+        Ok(value_schema().as_ref().clone())
+    }
+
+    fn execute_partitions(&mut self) -> AdbcResult<PartitionedResult> {
+        Ok(PartitionedResult {
+            partitions: vec![vec![1, 2, 3]],
+            schema: value_schema().as_ref().clone(),
+            rows_affected: -1,
+        })
+    }
+
+    fn get_parameter_schema(&self) -> AdbcResult<Schema> {
+        Ok(Schema::new(vec![Field::new("p", DataType::Int64, true)]))
+    }
+
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+        Arc::new(FakeCancel)
+    }
+}
+
+fn value_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![Field::new(
+        "value",
+        DataType::Int64,
+        false,
+    )]))
+}
+
+fn value_reader(values: Vec<i64>) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+    let schema = value_schema();
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(values))])?;
+    Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
+}
+
+fn string_reader(
+    name: &str,
+    value: &str,
+) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+    let schema = Arc::new(Schema::new(vec![Field::new(name, DataType::Utf8, false)]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(StringArray::from(vec![value]))],
+    )?;
+    Ok(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ordinary_adbc_client_reads_multiple_remote_batches() {
+    let mut targets = HashMap::new();
+    targets.insert(
+        "fake".to_string(),
+        TargetConfig {
+            driver: "unused-in-test".to_string(),
+            entrypoint: None,
+            database_options: Vec::new(),
+            connection_options: Vec::new(),
+            allow_client_database_options: false,
+            allow_client_connection_options: false,
+        },
+    );
+    let manager = Arc::new(SessionManager::new(
+        Arc::new(FakeBackend),
+        targets,
+        Duration::from_secs(60),
+        true,
+    ));
+    let server = Arc::new(build_server(manager, "test-worker".to_string()));
+    let auth = bearer_authenticate_static(HashMap::from([(
+        "secret".to_string(),
+        AuthContext::for_principal("test", "alice"),
+    )]));
+    let state = HttpState::builder()
+        .server(server)
+        .authenticate(auth)
+        .build();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, vgi_rpc::http::build_router(state))
+            .await
+            .unwrap();
+    });
+
+    let endpoint = format!("http://{address}");
+    let values = tokio::task::spawn_blocking(move || -> AdbcResult<(Vec<i64>, Option<i64>)> {
+        let mut driver = ProxyDriver;
+        let database = driver.new_database_with_opts([
+            (OptionDatabase::Uri, endpoint.into()),
+            (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
+            (
+                OptionDatabase::Other(OPTION_BEARER_TOKEN.into()),
+                "secret".into(),
+            ),
+        ])?;
+        let mut connection = database.new_connection()?;
+        connection.set_option(OptionConnection::ReadOnly, false.into())?;
+        assert_eq!(
+            connection.get_option_string(OptionConnection::CurrentCatalog)?,
+            "fake"
+        );
+        assert_eq!(
+            connection.get_option_bytes(OptionConnection::Other("bytes".into()))?,
+            vec![1, 2]
+        );
+        assert_eq!(
+            connection.get_option_int(OptionConnection::Other("int".into()))?,
+            42
+        );
+        assert_eq!(
+            connection.get_option_double(OptionConnection::Other("double".into()))?,
+            4.5
+        );
+        assert_eq!(connection.get_info(None)?.count(), 1);
+        assert_eq!(
+            connection
+                .get_objects(ObjectDepth::All, None, None, None, None, None)?
+                .count(),
+            1
+        );
+        assert_eq!(
+            connection.get_table_schema(None, None, "test")?,
+            value_schema().as_ref().clone()
+        );
+        assert_eq!(connection.get_table_types()?.count(), 1);
+        assert_eq!(connection.get_statistic_names()?.count(), 1);
+        assert_eq!(
+            connection.get_statistics(None, None, None, false)?.count(),
+            1
+        );
+        connection.get_cancel_handle().try_cancel()?;
+        connection.commit()?;
+        connection.rollback()?;
+        let mut statement = connection.new_statement()?;
+        statement.set_option(OptionStatement::TargetTable, "test".into())?;
+        assert_eq!(
+            statement.get_option_string(OptionStatement::TargetTable)?,
+            "fake"
+        );
+        assert_eq!(
+            statement.get_option_bytes(OptionStatement::Other("bytes".into()))?,
+            vec![3, 4]
+        );
+        assert_eq!(
+            statement.get_option_int(OptionStatement::Other("int".into()))?,
+            11
+        );
+        assert_eq!(statement.get_option_double(OptionStatement::Progress)?, 1.5);
+        statement.set_sql_query("select value from test")?;
+        statement.prepare()?;
+        assert_eq!(statement.get_parameter_schema()?.fields().len(), 1);
+        assert_eq!(statement.execute_schema()?, value_schema().as_ref().clone());
+        statement.get_cancel_handle().try_cancel()?;
+        let mut values = Vec::new();
+        for batch in statement.execute()? {
+            let batch = batch.map_err(adbc_core::error::Error::from)?;
+            let array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            values.extend(array.values().iter().copied());
+        }
+        let affected = statement.execute_update()?;
+        let bind_schema = value_schema();
+        let bind_batch = RecordBatch::try_new(
+            bind_schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![10, 11]))],
+        )?;
+        statement.bind(bind_batch)?;
+        assert_eq!(statement.execute_update()?, Some(2));
+        let stream_batches = vec![
+            Ok(RecordBatch::try_new(
+                bind_schema.clone(),
+                vec![Arc::new(Int64Array::from(vec![12]))],
+            )?),
+            Ok(RecordBatch::try_new(
+                bind_schema.clone(),
+                vec![Arc::new(Int64Array::from(vec![13, 14]))],
+            )?),
+        ];
+        statement.bind_stream(Box::new(RecordBatchIterator::new(
+            stream_batches,
+            bind_schema,
+        )))?;
+        assert_eq!(statement.execute_update()?, Some(3));
+        statement.set_substrait_plan([1, 2, 3])?;
+        let partitioned = statement.execute_partitions()?;
+        assert_eq!(partitioned.partitions, vec![vec![1, 2, 3]]);
+        assert_eq!(
+            connection
+                .read_partition(&partitioned.partitions[0])?
+                .count(),
+            1
+        );
+
+        // Re-executing one statement invalidates its old result without
+        // disturbing a result owned by another statement.
+        statement.set_sql_query("select value from test")?;
+        let mut invalidated = statement.execute()?;
+        let mut other = connection.new_statement()?;
+        other.set_sql_query("select value from test")?;
+        let independent = other.execute()?;
+        let _replacement = statement.execute()?;
+        assert!(invalidated.next().unwrap().is_ok());
+        assert!(invalidated.next().unwrap().is_err());
+        assert_eq!(independent.count(), 2);
+        Ok((values, affected))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(values.0, vec![1, 2, 3, 4]);
+    assert_eq!(values.1, Some(7));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authentication_is_required() {
+    let manager = Arc::new(SessionManager::new(
+        Arc::new(FakeBackend),
+        HashMap::from([(
+            "fake".to_string(),
+            TargetConfig {
+                driver: "unused".to_string(),
+                entrypoint: None,
+                database_options: Vec::new(),
+                connection_options: Vec::new(),
+                allow_client_database_options: false,
+                allow_client_connection_options: false,
+            },
+        )]),
+        Duration::from_secs(60),
+        true,
+    ));
+    let server = Arc::new(build_server(manager, "test-worker".to_string()));
+    let state = HttpState::builder().server(server).build();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, vgi_rpc::http::build_router(state))
+            .await
+            .unwrap();
+    });
+
+    let endpoint = format!("http://{address}");
+    let error = tokio::task::spawn_blocking(move || {
+        let mut driver = ProxyDriver;
+        let database = driver
+            .new_database_with_opts([
+                (OptionDatabase::Uri, endpoint.into()),
+                (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
+            ])
+            .unwrap();
+        database.new_connection().err().unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(matches!(error.status, Status::IO | Status::Unauthorized));
+    task.abort();
+}
+
+fn fake_manager(require_authentication: bool) -> Arc<SessionManager> {
+    Arc::new(SessionManager::new(
+        Arc::new(FakeBackend),
+        HashMap::from([(
+            "fake".to_string(),
+            TargetConfig {
+                driver: "unused".to_string(),
+                entrypoint: None,
+                database_options: Vec::new(),
+                connection_options: Vec::new(),
+                allow_client_database_options: false,
+                allow_client_connection_options: false,
+            },
+        )]),
+        Duration::from_secs(60),
+        require_authentication,
+    ))
+}
+
+fn query_values(
+    endpoint: String,
+    extra_options: Vec<(OptionDatabase, OptionValue)>,
+) -> AdbcResult<Vec<i64>> {
+    let mut options = vec![
+        (OptionDatabase::Uri, endpoint.into()),
+        (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
+    ];
+    options.extend(extra_options);
+    let mut driver = ProxyDriver;
+    let database = driver.new_database_with_opts(options)?;
+    let mut connection = database.new_connection()?;
+    let mut statement = connection.new_statement()?;
+    statement.set_sql_query("select value from test")?;
+    let mut values = Vec::new();
+    for batch in statement.execute()? {
+        let batch = batch.map_err(adbc_core::error::Error::from)?;
+        values.extend(
+            batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .values()
+                .iter()
+                .copied(),
+        );
+    }
+    Ok(values)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ordinary_adbc_client_reads_multiple_batches_over_tcp() {
+    let server = Arc::new(build_server(fake_manager(false), "tcp-worker".into()));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let serve_shutdown = Arc::clone(&shutdown);
+    let (bound_tx, bound_rx) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
+        serve_tcp(
+            server,
+            "127.0.0.1",
+            0,
+            None,
+            serve_shutdown,
+            move |_host, port| bound_tx.send(port).unwrap(),
+        )
+        .unwrap();
+    });
+    let port = bound_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let values = tokio::task::spawn_blocking(move || {
+        query_values(format!("tcp://127.0.0.1:{port}"), Vec::new())
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(values, vec![1, 2, 3, 4]);
+    shutdown.store(true, Ordering::Release);
+    let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+    thread.join().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ordinary_adbc_client_reads_multiple_batches_over_mtls_tcp() {
+    use rcgen::string::Ia5String;
+    use rcgen::{
+        BasicConstraints, CertificateParams, CertifiedIssuer, ExtendedKeyUsagePurpose, IsCa,
+        KeyPair, KeyUsagePurpose, SanType,
+    };
+
+    let server_key = KeyPair::generate().unwrap();
+    let mut server_params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+    server_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let server_cert = server_params.self_signed(&server_key).unwrap();
+
+    let mut ca_params = CertificateParams::default();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let ca = CertifiedIssuer::self_signed(ca_params, KeyPair::generate().unwrap()).unwrap();
+
+    let client_key = KeyPair::generate().unwrap();
+    let mut client_params = CertificateParams::default();
+    client_params.is_ca = IsCa::ExplicitNoCa;
+    client_params.subject_alt_names = vec![SanType::URI(
+        Ia5String::try_from("spiffe://example.org/workload").unwrap(),
+    )];
+    client_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    client_params.extended_key_usages = vec![
+        ExtendedKeyUsagePurpose::ClientAuth,
+        ExtendedKeyUsagePurpose::ServerAuth,
+    ];
+    let client_cert = client_params.signed_by(&client_key, &ca).unwrap();
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(ca.der().clone()).unwrap();
+    let tls = TcpMutualTlsConfig::new(
+        vec![server_cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(server_key.serialize_der()).into(),
+        roots,
+        ["example.org"],
+    )
+    .unwrap();
+    let server = Arc::new(build_server(fake_manager(true), "mtls-worker".into()));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let serve_shutdown = Arc::clone(&shutdown);
+    let (bound_tx, bound_rx) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
+        serve_tcp_with_mtls_identity(
+            server,
+            "127.0.0.1",
+            0,
+            None,
+            serve_shutdown,
+            TcpMutualTlsOptions::new(tls).with_identity(TcpIdentityOptions {
+                policy: Some(vgi_rpc::peer_identity_primary("spiffe")),
+                ..TcpIdentityOptions::default()
+            }),
+            move |_host, port| bound_tx.send(port).unwrap(),
+        )
+        .unwrap();
+    });
+    let port = bound_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    let directory = tempfile::tempdir().unwrap();
+    let ca_path = directory.path().join("ca.pem");
+    let cert_path = directory.path().join("client.pem");
+    let key_path = directory.path().join("client-key.pem");
+    std::fs::write(&ca_path, server_cert.pem()).unwrap();
+    std::fs::write(&cert_path, client_cert.pem()).unwrap();
+    std::fs::write(&key_path, client_key.serialize_pem()).unwrap();
+    let values = tokio::task::spawn_blocking(move || {
+        query_values(
+            format!("tls+tcp://127.0.0.1:{port}"),
+            vec![
+                (
+                    OptionDatabase::Other(OPTION_TLS_CA.into()),
+                    ca_path.to_string_lossy().into_owned().into(),
+                ),
+                (
+                    OptionDatabase::Other(OPTION_TLS_CERT.into()),
+                    cert_path.to_string_lossy().into_owned().into(),
+                ),
+                (
+                    OptionDatabase::Other(OPTION_TLS_KEY.into()),
+                    key_path.to_string_lossy().into_owned().into(),
+                ),
+                (
+                    OptionDatabase::Other(OPTION_TLS_SERVER_NAME.into()),
+                    "localhost".into(),
+                ),
+            ],
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(values, vec![1, 2, 3, 4]);
+    shutdown.store(true, Ordering::Release);
+    let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+    thread.join().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordinary_adbc_client_reads_multiple_batches_over_raw_iroh() {
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
+        .alpns(vec![VGI_IROH_ALPN.to_vec()])
+        .relay_mode(iroh::RelayMode::Disabled)
+        .bind()
+        .await
+        .unwrap();
+    let endpoint_id = endpoint.id();
+    let direct_address = endpoint
+        .addr()
+        .ip_addrs()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .unwrap();
+    let server = IrohServer::with_options(
+        Arc::new(build_server(fake_manager(true), "iroh-worker".into())),
+        IrohServerOptions::default()
+            .with_issuer("test.mesh")
+            .with_policy(vgi_rpc::peer_identity_primary("iroh")),
+    );
+    let shutdown = CancellationToken::new();
+    let serve_shutdown = shutdown.clone();
+    let task = tokio::spawn(async move {
+        server.serve(endpoint, serve_shutdown).await.unwrap();
+    });
+
+    let values = tokio::task::spawn_blocking(move || {
+        query_values(
+            format!("iroh://{endpoint_id}"),
+            vec![(
+                OptionDatabase::Other(OPTION_IROH_DIRECT_ADDRESS.into()),
+                direct_address.to_string().into(),
+            )],
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(values, vec![1, 2, 3, 4]);
+    shutdown.cancel();
+    task.await.unwrap();
+}

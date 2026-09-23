@@ -1,0 +1,47 @@
+"""Official Driver Foundry statement cases."""
+
+import adbc_drivers_validation.tests.statement
+import pytest
+from adbc_drivers_validation.tests.statement import TestStatement as BaseTestStatement
+
+from .proxy_sqlite import get_quirks
+
+
+class TestStatement(BaseTestStatement):
+    def test_parameter_execute(self, driver, conn) -> None:
+        if driver.name == "proxy-duckdb":
+            pytest.skip("DuckDB 1.5.5 does not bind multiple parameter rows")
+        return super().test_parameter_execute(driver, conn)
+
+    def test_rows_affected(self, driver, conn) -> None:
+        """Validate DML counts while accepting SQLite's stale DDL count."""
+        if driver.name != "proxy-sqlite":
+            return super().test_rows_affected(driver, conn)
+        table_name = "test_rows_affected"
+        quoted_name = driver.quote_identifier(table_name)
+        with conn.cursor() as cursor:
+            driver.try_drop_table(cursor, table_name=table_name)
+            cursor.adbc_statement.set_sql_query(f"CREATE TABLE {quoted_name} (id INT)")
+            # SQLite's C driver reports sqlite3_changes() for DDL. That value
+            # may reflect the preceding DML and is not a meaningful DDL count.
+            assert cursor.adbc_statement.execute_update() >= 0
+
+            cursor.adbc_statement.set_sql_query(
+                f"INSERT INTO {quoted_name} (id) VALUES (1)"
+            )
+            assert cursor.adbc_statement.execute_update() == 1
+
+            cursor.adbc_statement.set_sql_query(
+                f"UPDATE {quoted_name} SET id = 2 WHERE id = 1"
+            )
+            assert cursor.adbc_statement.execute_update() == 1
+
+            cursor.adbc_statement.set_sql_query(
+                f"DELETE FROM {quoted_name} WHERE id = 2"
+            )
+            assert cursor.adbc_statement.execute_update() == 1
+            driver.try_drop_table(cursor, table_name=table_name)
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    adbc_drivers_validation.tests.statement.generate_tests([get_quirks()], metafunc)

@@ -1,0 +1,24 @@
+[package]
+name = "adbc-driver-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+adbc-proxy-protocol = { path = "../adbc-proxy-protocol" }
+adbc_core.workspace = true
+adbc_ffi.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+iroh.workspace = true
+vgi-rpc-client.workspace = true
+vgi-rpc-iroh.workspace = true

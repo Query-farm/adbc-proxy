@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  external-validation:
+    name: External ADBC validation (${{ matrix.backend }}, ${{ matrix.transport }})
+    needs: rust
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: sqlite
+            driver: sqlite=1.12.0
+            transport: http
+          - backend: duckdb
+            driver: duckdb=1.5.5
+            transport: http
+          - backend: postgresql
+            driver: postgresql=1.12.0
+            transport: http
+          - backend: sqlite
+            driver: sqlite=1.12.0
+            transport: tcp
+          - backend: sqlite
+            driver: sqlite=1.12.0
+            transport: mtls
+          - backend: sqlite
+            driver: sqlite=1.12.0
+            transport: iroh
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ADBC_POSTGRESQL_URI: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      ADBC_PROXY_TRANSPORT: ${{ matrix.transport }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.11.7
+          enable-cache: true
+      - run: uv python install 3.13
+      - uses: columnar-tech/setup-dbc@v1
+        with:
+          version: v0.3.0
+          drivers: ${{ matrix.driver }}
+      - run: cargo build --release --workspace
+      - run: >-
+          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          smoke ${{ matrix.backend }}
+      - name: Concurrent proxy load smoke
+        if: matrix.backend == 'sqlite' && matrix.transport == 'mtls'
+        run: >-
+          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          load sqlite --workers 8 --iterations 5 --warmup 1
+          --rows 10000 --query-rows 512 --payload-bytes 32
+      - run: >-
+          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          foundry ${{ matrix.backend }} -q
+          --junitxml=validation/foundry-results.xml
+      - name: Upload Foundry results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: foundry-results-${{ matrix.backend }}-${{ matrix.transport }}
+          path: validation/foundry-results.xml
+          if-no-files-found: ignore

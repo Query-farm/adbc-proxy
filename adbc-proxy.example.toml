@@ -65,7 +65,8 @@ development-token = "developer@example.com"
 # leeway_seconds = 30
 
 [targets.sqlite]
-driver = "adbc_driver_sqlite"
+# Logical driver name from the manifest installed by `dbc install sqlite`.
+driver = "sqlite"
 entrypoint = "AdbcDriverSqliteInit"
 allow_client_database_options = false
 allow_client_connection_options = false

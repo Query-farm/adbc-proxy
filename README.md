@@ -1,154 +1,306 @@
 # ADBC Proxy
 
-ADBC Proxy is a network service and an ADBC driver that make server-installed
-ADBC drivers available to ordinary ADBC applications. Applications load only
-the proxy driver. The service authenticates the caller, authorizes a configured
-target, opens the downstream driver, and preserves ADBC connection, statement,
-transaction, and result-stream state.
+[![CI](https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-The wire protocol is defined as typed VGI-RPC methods over Arrow IPC. The
-driver and service support HTTP(S), persistent TCP, mutual-TLS TCP, and raw
-stateful Iroh transports. Protocol 0.2 is intentionally incompatible with the
-earlier nested-IPC prototype; client and server versions must match.
+ADBC Proxy makes server-installed [ADBC](https://arrow.apache.org/adbc/)
+drivers available to ordinary ADBC applications over a network. Applications
+load the proxy's ADBC driver and continue to use the standard ADBC API; the
+service owns the downstream database connection, statements, transactions,
+and Arrow result streams.
 
-The current build is a single-worker production candidate. It implements the
-ADBC 1.1 connection and statement surface, explicit remote handle lifecycle,
-authentication and authorization, resource limits, and external validation.
+```text
+ADBC application
+    -> libadbc_driver_proxy
+    -> VGI-RPC over HTTP(S), TCP, mTLS, or Iroh
+    -> adbc-proxy-server
+    -> server-installed ADBC driver
+    -> database
+```
 
-Database results are not treated as an endless push stream. A downstream ADBC
-`execute` returns a pull-based Arrow stream. The proxy keeps that cursor on its
-owning worker and advances it only when the client asks for the next batch.
-Over HTTP, VGI continuation tokens turn each pull into a new request and carry
-native Arrow batches. TCP, mTLS, and Iroh use the same native VGI producer;
-each active byte-stream result owns a dedicated logical stream. Bind and
-bind-stream likewise use runtime-schema native VGI exchanges.
+The project is pre-release. Build the client driver and server from source;
+published binary packages are not available yet.
 
-## Workspace
+## Features
 
-- `adbc-proxy-protocol`: stable method names, Arrow schemas, typed option and
-  structured ADBC error representations.
-- `adbc-proxy-server`: authenticated VGI service, target policy, session and
-  handle lifecycle, and dynamic downstream ADBC driver loading.
-- `adbc-driver-proxy`: exported ADBC 1.1 client driver.
+- Standard ADBC 1.1 client interface and C entrypoint
+  `AdbcDriverProxyInit`.
+- Server-side loading of SQLite, DuckDB, PostgreSQL, and other ADBC drivers.
+- SQL and Substrait statements, prepared statements, parameter binding,
+  transactions, metadata, statistics, partitioned results, and cancellation.
+- Pull-based native Arrow record-batch streaming without nesting Arrow IPC
+  inside Arrow values.
+- HTTP(S), persistent TCP, mutual-TLS TCP, and authenticated Iroh transports.
+- Static bearer-token or JWT/JWKS authentication for HTTP, SPIFFE identities
+  for mTLS, and endpoint-key identities for Iroh.
+- Per-principal target authorization, resource quotas, deadlines, session
+  expiry, graceful shutdown, structured ADBC errors, and OpenTelemetry traces.
 
-## Development
+Capabilities still depend on the selected downstream driver. Unsupported
+operations are returned as ADBC `NOT_IMPLEMENTED` errors.
+
+## Quick start
+
+The example below runs the proxy against SQLite on the same machine.
+
+### 1. Install prerequisites
+
+Install Rust 1.97 or newer and [`dbc`](https://docs.columnar.tech/dbc/), then
+install the downstream SQLite driver:
+
+```console
+dbc install sqlite --level user
+```
+
+Only the proxy server needs the downstream driver. Client machines need the
+proxy shared library instead.
+
+### 2. Build the proxy
+
+```console
+git clone https://github.com/Query-farm/adbc-proxy.git
+cd adbc-proxy
+cargo build --release --workspace
+```
+
+The build produces:
+
+- `target/release/adbc-proxy-server`
+- `target/release/libadbc_driver_proxy.so` on Linux
+- `target/release/libadbc_driver_proxy.dylib` on macOS
+
+Windows builds are not yet covered by the project's CI matrix.
+
+### 3. Start the server
+
+The included development configuration defines a SQLite target, listens on
+loopback, and maps the bearer token `development-token` to the principal
+`developer@example.com`.
+
+```console
+cp adbc-proxy.example.toml adbc-proxy.toml
+./target/release/adbc-proxy-server --config adbc-proxy.toml
+```
+
+The configuration can also be selected with `ADBC_PROXY_CONFIG`. Use
+`ADBC_PROXY_SERVER_ID` to assign a stable server identifier for telemetry.
+
+Check readiness from another terminal:
+
+```console
+curl --fail http://127.0.0.1:8080/readyz
+```
+
+### 4. Connect from Python
+
+Install the standard Python ADBC driver manager and PyArrow:
+
+```console
+python3 -m pip install adbc-driver-manager pyarrow
+```
+
+Then load the proxy driver just like any other ADBC driver:
+
+```python
+from pathlib import Path
+
+import adbc_driver_manager.dbapi as adbc
+
+proxy_driver = Path("target/release/libadbc_driver_proxy.dylib").resolve()
+
+with adbc.connect(
+    driver=proxy_driver,
+    entrypoint="AdbcDriverProxyInit",
+    db_kwargs={
+        "uri": "http://127.0.0.1:8080",
+        "adbc.proxy.target": "sqlite",
+        "adbc.proxy.auth.bearer_token": "development-token",
+    },
+    autocommit=True,
+) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT 1 + ? AS answer", [41])
+        table = cursor.fetch_arrow_table()
+        print(table)
+```
+
+Use `libadbc_driver_proxy.so` on Linux. The repository also includes a
+complete [Python example](examples/python_client.py), which can be run with:
+
+```console
+export ADBC_PROXY_DRIVER="$PWD/target/release/libadbc_driver_proxy.dylib"
+export ADBC_PROXY_ENDPOINT="http://127.0.0.1:8080"
+export ADBC_PROXY_TARGET="sqlite"
+export ADBC_PROXY_TOKEN="development-token"
+python3 examples/python_client.py
+```
+
+## Server configuration
+
+The server reads a TOML configuration file. See
+[`adbc-proxy.example.toml`](adbc-proxy.example.toml) for all resource limits
+and transport sections.
+
+Each target names an ADBC driver known to the server's ADBC driver manager and
+may inject database or connection options. Server-configured options are
+applied after caller-provided options, so callers cannot replace an injected
+database URI or credential.
+
+```toml
+[targets.postgresql]
+driver = "postgresql"
+entrypoint = "AdbcDriverPostgresqlInit"
+allow_client_database_options = false
+allow_client_connection_options = false
+
+[[targets.postgresql.database_options]]
+key = "uri"
+type = "string"
+value = "postgresql://proxy_user:secret@database.internal:5432/app"
+```
+
+Supported option value types are `string`, `bytes` (base64 encoded), `int`,
+and `double`. Do not commit credentials to source control; supply the runtime
+configuration through your deployment's secret-management mechanism.
+
+Set `allow_client_database_options` or `allow_client_connection_options` only
+when callers are permitted to provide their own downstream options. Proxy
+transport options are never forwarded. Configured server values still win on
+duplicate keys.
+
+### Authentication and authorization
+
+For a local or controlled HTTP deployment, static tokens map bearer tokens to
+principals:
+
+```toml
+[auth.static_bearer_tokens]
+development-token = "developer@example.com"
+
+[auth.target_permissions]
+"developer@example.com" = ["sqlite", "postgresql"]
+```
+
+Production HTTP deployments can replace static tokens with a JWT issuer:
+
+```toml
+[auth.jwt]
+issuer = "https://identity.example.com/"
+audience = "adbc-proxy"
+jwks_url = "https://identity.example.com/.well-known/jwks.json"
+principal_claim = "sub"
+```
+
+Static-token and JWT modes are mutually exclusive. Once
+`auth.target_permissions` contains an entry, unlisted principals are denied
+all targets. See [Security and resource controls](docs/security.md) before
+deploying the service.
+
+## Client options
+
+Pass these as ADBC database options when opening the proxy driver:
+
+| Option | Purpose | Default |
+| --- | --- | --- |
+| `uri` or `adbc.proxy.uri` | Proxy endpoint using `http://`, `https://`, `tcp://`, `tls+tcp://`, or `iroh://` | required |
+| `adbc.proxy.target` | Server-configured target name | required |
+| `adbc.proxy.auth.bearer_token` | HTTP(S) bearer token | none |
+| `adbc.proxy.request_timeout_ms` | Timeout for each RPC | `30000` |
+| `adbc.proxy.max_response_bytes` | Maximum accepted HTTP response size | `268435456` |
+| `adbc.proxy.max_bind_bytes` | Cumulative parameter-bind budget | `67108864` |
+| `adbc.proxy.tls.ca` | CA bundle for `tls+tcp://` | required for mTLS |
+| `adbc.proxy.tls.cert` | Client certificate chain for `tls+tcp://` | required for mTLS |
+| `adbc.proxy.tls.key` | Client private key for `tls+tcp://` | required for mTLS |
+| `adbc.proxy.tls.server_name` | TLS server name | endpoint host |
+| `adbc.proxy.iroh.secret_key` | Stable Iroh client secret key | generated per process |
+| `adbc.proxy.iroh.direct_address` | Direct Iroh `host:port` discovery hint | relay/discovery |
+
+## Transports
+
+| Endpoint | Authentication | Intended use |
+| --- | --- | --- |
+| `http://` / `https://` | Static bearer token or JWT | HTTP ingress, reverse proxies, and service meshes |
+| `tcp://host:port` | None | Loopback-only development and trusted local routing |
+| `tls+tcp://host:port` | Mutual TLS with a verified SPIFFE identity | Direct production TCP |
+| `iroh://<endpoint-id>` | Cryptographic Iroh endpoint identity | Direct authenticated QUIC connectivity |
+
+The server's HTTP listener is plaintext. Terminate TLS in a reverse proxy,
+sidecar, or service mesh and keep the server listener on loopback. Setting
+`server.allow_insecure_remote = true` acknowledges a plaintext remote bind; it
+does not add TLS.
+
+Plain TCP cannot be used when authentication is required. Production TCP uses
+the `[tcp.tls]` server configuration and the four `adbc.proxy.tls.*` client
+options. Iroh servers map allowed client endpoint IDs to principals in
+`iroh.principals`; persist the server secret-key file so its endpoint ID stays
+stable.
+
+## Deployment model
+
+ADBC connections are stateful. A server process owns each connection,
+transaction, statement, upload, and result cursor for its lifetime. HTTP
+requests belonging to a session must therefore reach the same server process.
+Use connection/session affinity at ingress, or route clients directly over
+mTLS TCP or Iroh.
+
+A worker restart invalidates its live sessions. Do not automatically replay
+commits, updates, DDL, or other non-idempotent operations after a connection
+loss. Native drivers also share the server process; isolate drivers or tenants
+into separate workers when crash containment or hard execution deadlines are
+required. See the [process-isolation profile](docs/process-isolation.md).
+
+## Observability and health
+
+Every RPC action emits a structured tracing span with the method, authenticated
+principal, status, duration, and Arrow batch/row counts. SQL text, credentials,
+tokens, connection strings, Arrow values, and raw downstream error messages
+are not recorded.
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to enable OTLP/HTTP trace export. Standard
+OpenTelemetry headers and timeout environment variables are honored. Set
+`OTEL_SDK_DISABLED=true` to disable export explicitly.
+
+The HTTP listener exposes unauthenticated liveness and readiness probes:
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /health` (VGI health endpoint)
+
+## Development and validation
+
+Run the Rust quality gates with:
 
 ```console
 cargo fmt --all --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-./validation/run_external.sh smoke
-./validation/run_external.sh foundry -q
-ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh load duckdb \
+```
+
+The external harness loads the compiled C ABI through the Python ADBC driver
+manager and tests real SQLite, DuckDB, and PostgreSQL drivers:
+
+```console
+dbc install "sqlite=1.12.0" --level user
+./validation/run_external.sh smoke sqlite
+./validation/run_external.sh foundry sqlite -q
+ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
+ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load sqlite \
   --workers 32 --iterations 50
-./validation/run_external.sh large-payload sqlite --response-budget-mib 2
 ```
 
-The external tests load the exported C ABI with the Python ADBC driver manager,
-cross VGI over the selected transport, and execute against the independently installed
-SQLite, DuckDB, and PostgreSQL ADBC drivers. Pass a backend after the mode, for
-example `./validation/run_external.sh foundry postgresql -q`. See
-[the latest validation results](validation/RESULTS.md).
+See the [validation guide](validation/README.md) for prerequisites, transport
+selection, payload-boundary testing, fault injection, load testing, and the
+ADBC Driver Foundry suite.
 
-The server configuration format is shown in
-[`adbc-proxy.example.toml`](adbc-proxy.example.toml).
+## Repository layout
 
-## Run the service
-
-Install the downstream ADBC driver only on the server and make it discoverable
-by the ADBC driver manager. Then:
-
-```console
-cp adbc-proxy.example.toml adbc-proxy.toml
-cargo run -p adbc-proxy-server -- --config adbc-proxy.toml
-```
-
-Build the client-side ADBC shared library with:
-
-```console
-cargo build -p adbc-driver-proxy --release
-```
-
-### Python client
-
-Python uses the standard ADBC driver manager and loads the proxy shared
-library. It does not install the selected downstream driver:
-
-```console
-python -m pip install adbc-driver-manager pyarrow
-export ADBC_PROXY_DRIVER="$PWD/target/release/libadbc_driver_proxy.dylib"
-export ADBC_PROXY_ENDPOINT="https://adbc.example.com"
-export ADBC_PROXY_TARGET="postgresql"
-export ADBC_PROXY_TOKEN="..."
-python examples/python_client.py
-```
-
-Use `libadbc_driver_proxy.so` on Linux. The complete example is
-[`examples/python_client.py`](examples/python_client.py).
-
-An ADBC application loads `adbc_driver_proxy` and supplies these database
-options:
-
-- `uri` or `adbc.proxy.uri`: an `http://`, `https://`, `tcp://`,
-  `tls+tcp://`, or `iroh://<endpoint-id>` endpoint
-- `adbc.proxy.target`: administrator-defined target name, such as `sqlite`
-- `adbc.proxy.auth.bearer_token`: HTTP(S) bearer token
-- `adbc.proxy.request_timeout_ms`: positive per-RPC client timeout
-- `adbc.proxy.max_response_bytes`: HTTP encoded/decoded response budget
-- `adbc.proxy.max_bind_bytes`: client-side cumulative bind budget, default 64 MiB
-- `adbc.proxy.tls.ca`, `.cert`, `.key`, and `.server_name`: mTLS files and
-  verified server name for `tls+tcp://`
-- `adbc.proxy.iroh.secret_key`: optional stable client endpoint secret
-- `adbc.proxy.iroh.direct_address`: optional `host:port` discovery hint
-
-Other database options, plus connection options supplied during connection
-creation, may be forwarded when the selected target permits them. Configured
-server options are applied last, so a caller cannot replace an injected URI or
-credential.
-
-Each RPC action emits a structured span with method, authenticated principal,
-status, duration, and Arrow batch/row counts. Span-close records are written to
-the normal tracing output. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or the
-trace-specific equivalent) to enable batched OTLP/HTTP export; standard OTLP
-headers and timeout environment variables are honored by the exporter. SQL,
-connection strings, bearer tokens, and full exception messages are not added
-to these spans.
-
-The HTTP listener is always available for health checks and HTTP RPC. Optional
-TCP and Iroh listeners share the same session manager. Plain TCP is restricted
-to loopback by default. Production TCP uses mandatory client-certificate mTLS
-and strict SPIFFE workload identities. Raw Iroh authenticates the remote
-endpoint key and maps configured endpoint IDs to application principals.
-
-## Current scope
-
-Implemented now: dynamic server-side driver loading; named target policy;
-principal-bound sessions; typed options; all connection metadata calls;
-SQL/Substrait statements; prepare; batch and stream binding; query, update,
-schema, and partition execution; commit/rollback; connection and statement
-cancellation; multi-batch result reads; replay-safe sequence numbers;
-structured ADBC errors; static bearer or JWT/JWKS authentication; target ACLs;
-quotas and lease reaping; graceful shutdown; health probes; and optional OTLP
-trace export. Unsupported downstream capabilities remain downstream
-`NOT_IMPLEMENTED` errors instead of being emulated.
-
-Iroh client resources are process-wide: databases with the same client
-identity, remote endpoint, direct address, and timeout share one authenticated
-physical connection while each ADBC connection receives an independent VGI
-stream.
-
-This is suitable for a bounded single-process deployment. Each downstream
-session runs behind a bounded actor with independent cancellation handles and
-an operation deadline. It is not
-yet a transparent multi-replica service: live sessions are process-local and
-need ingress affinity, native drivers share the service process, and worker
-loss invalidates transactions. A timed-out driver call is isolated to its
-session actor and may continue until its ADBC cancellation handle succeeds or
-the process is terminated; Rust cannot safely kill a thread executing foreign
-code. See
-[security and resource controls](docs/security.md) before deployment.
-Drivers that require a hard deadline should use the
-[process-isolation profile](docs/process-isolation.md).
+- `crates/adbc-driver-proxy`: client-side ADBC shared library.
+- `crates/adbc-proxy-server`: proxy service and downstream driver manager.
+- `crates/adbc-proxy-protocol`: typed ADBC-over-VGI wire contract.
+- `examples`: client examples.
+- `validation`: external conformance, fault, payload, and load tests.
+- `docs`: security and process-isolation guidance.
 
 ## License
 

@@ -14,10 +14,6 @@ earlier nested-IPC prototype; client and server versions must match.
 The current build is a single-worker production candidate. It implements the
 ADBC 1.1 connection and statement surface, explicit remote handle lifecycle,
 authentication and authorization, resource limits, and external validation.
-The implementation status and remaining distributed-deployment work are in
-[the implementation plan](docs/plan.md). The architectural tradeoffs and
-research findings are in the
-[feasibility assessment](docs/feasibility.md).
 
 Database results are not treated as an endless push stream. A downstream ADBC
 `execute` returns a pull-based Arrow stream. The proxy keeps that cursor on its
@@ -25,8 +21,7 @@ owning worker and advances it only when the client asks for the next batch.
 Over HTTP, VGI continuation tokens turn each pull into a new request and carry
 native Arrow batches. TCP, mTLS, and Iroh use the same native VGI producer;
 each active byte-stream result owns a dedicated logical stream. Bind and
-bind-stream likewise use runtime-schema native VGI exchanges; see
-[the data-plane migration](docs/native-streaming.md).
+bind-stream likewise use runtime-schema native VGI exchanges.
 
 ## Workspace
 
@@ -154,3 +149,9 @@ code. See
 [security and resource controls](docs/security.md) before deployment.
 Drivers that require a hard deadline should use the
 [process-isolation profile](docs/process-isolation.md).
+
+## License
+
+Copyright 2026 [Query Farm LLC](https://query.farm).
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

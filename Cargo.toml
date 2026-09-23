@@ -10,7 +10,9 @@ members = [
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
+authors = ["Query Farm LLC"]
 license = "Apache-2.0"
+homepage = "https://query.farm"
 repository = "https://github.com/Query-farm/adbc-proxy"
 
 [workspace.dependencies]

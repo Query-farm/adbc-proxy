@@ -49,7 +49,7 @@ HTTP(S), TCP, mutual-TLS TCP, or raw Iroh QUIC streams.
 - `crates/adbc-driver-proxy`: exported ADBC C ABI and transport clients.
 - `validation`: Python C-ABI smoke, Driver Foundry conformance, load harness,
   and reproducible results.
-- `docs`: feasibility, security model, and implementation plan.
+- `docs`: operator-facing security and process-isolation guidance.
 
 The local sibling `../vgi-rpc-rust` is the upstream transport implementation.
 Keep generally reusable transport features there; keep ADBC lifecycle and

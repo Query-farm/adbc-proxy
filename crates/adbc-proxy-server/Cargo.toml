@@ -35,3 +35,4 @@ adbc-driver-proxy = { path = "../adbc-driver-proxy" }
 arrow-array.workspace = true
 rcgen = "0.14"
 tempfile = "3"
+vgi-rpc-client.workspace = true

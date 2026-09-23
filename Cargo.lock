@@ -64,6 +64,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vgi-rpc",
+ "vgi-rpc-client",
  "vgi-rpc-iroh",
 ]
 

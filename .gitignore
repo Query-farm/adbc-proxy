@@ -1,5 +1,7 @@
 /target
 .ruff_cache/
+__pycache__/
+*.pyc
 *.dylib
 *.so
 *.dll

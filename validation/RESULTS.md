@@ -161,8 +161,50 @@ validated without an application error.
 These are local macOS measurements, not deployment capacity claims. Client,
 proxy, and database shared one machine; DuckDB also executes inside the proxy
 process, while PostgreSQL executes separately. The raw reports are in
-[`load-results`](load-results/). Multi-hour soak, remote-network runs, fault
-injection, and hundreds-of-session testing remain outstanding.
+[`load-results`](load-results/). Multi-hour soak, remote-network runs, and
+hundreds-of-session testing remain outstanding.
+
+## Payload boundaries and fault injection
+
+On 2026-09-23 the exported driver and SQLite 1.12 were exercised over HTTP,
+TCP, mTLS, and Iroh with a 2 MiB client response budget. HTTP accepted the
+below-budget result and rejected payloads at and above the nominal budget once
+VGI envelope bytes were included. TCP, mTLS, and Iroh accepted all three,
+confirming the HTTP response option does not constrain byte transports.
+
+An HTTP run using the normal 256 MiB response budget accepted a payload 64 KiB
+below the limit and rejected payloads at and 64 KiB above it; the exactly
+256 MiB value encoded to 268,436,872 bytes. A real bind/bind-stream run accepted
+raw payloads 4 KiB below 64 MiB and rejected raw payloads at and above 64 MiB
+because their encoded Arrow streams exceeded the inner cap. With 1 MiB of
+outer request headroom, a raw payload 512 bytes below 64 MiB remained reachable
+over HTTP.
+
+Overridden 256 KiB client/server bind budgets passed below/at/above boundary
+tests for both bind APIs. With a 512 KiB client budget and 256 KiB server
+budget, the server independently rejected the 262,600-byte encoded payload.
+Raw HTTP probes returned 413 for an oversized/truncated body and 408 at the
+configured two-second request timeout; disconnect and every rejection were
+followed by a successful query.
+
+After eliminating retained raw IPC cloning, the heavy HTTP process rose from
+8.4 MiB RSS to 282.9 MiB after near-cap binds and 288.7 MiB after bind-stream,
+settling at 243.6 MiB after one second. This is materially below the earlier
+581 MiB high-water result, but allocator/downstream retention still requires a
+longer memory-pressure soak. The roughly 4 GiB VGI Rust implementation guard
+and roughly 2 GiB monolithic Arrow `Binary` boundary were not allocated or
+tested. Bulk inputs and byte-transport results remain scheduled for migration
+to native VGI exchange/producer streams.
+
+Seven deterministic server fault tests cover producer cancellation, ADBC
+statement/connection cancellation, downstream `NOT_IMPLEMENTED`, principal
+isolation, caller timeout, abandoned-stream lease cleanup, malformed and
+replayed requests, terminal reader errors, structured error fields, in-flight
+lease protection, shutdown cleanup, and quota reuse. They found and fixed
+non-replay-stable terminal reader errors and idle reaping of active sessions.
+They also confirmed that the current synchronous VGI HTTP dispatch cannot
+preempt a blocking ADBC callback; worker/process isolation remains required for
+enforceable termination.
 
 ## Apache C++ validation library
 

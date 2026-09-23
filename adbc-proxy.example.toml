@@ -8,7 +8,10 @@ require_authentication = true
 # does not enable TLS.
 allow_insecure_remote = false
 request_timeout_seconds = 300
-max_request_body_bytes = 67108864
+# Bind IPC and the outer HTTP request are independent limits. The HTTP budget
+# must leave at least 1 MiB of VGI envelope headroom above max_bind_bytes.
+max_bind_bytes = 67108864
+max_request_body_bytes = 68157440
 max_sessions = 1024
 max_sessions_per_principal = 32
 max_statements_per_session = 64

@@ -4,7 +4,9 @@ use std::sync::Arc;
 use adbc_core::error::Error as AdbcError;
 use adbc_core::options::{InfoCode, ObjectDepth, OptionValue};
 use adbc_proxy_protocol as protocol;
-use arrow_array::{BinaryArray, BooleanArray, Int64Array, RecordBatch, StringArray};
+use arrow_array::{
+    BinaryArray, BooleanArray, Int64Array, RecordBatch, RecordBatchIterator, StringArray,
+};
 use serde::{Deserialize, Serialize};
 use vgi_rpc::server::{MethodInfo, MethodType, RpcServer, StateDecoder};
 use vgi_rpc::stream::{OutputCollector, ProducerState, StreamResult, StreamStateKind};
@@ -64,6 +66,14 @@ impl ProducerState for ResultProducer {
 }
 
 pub fn build_server(manager: Arc<SessionManager>, server_id: String) -> RpcServer {
+    build_server_with_max_bind(manager, server_id, protocol::MAX_BIND_STREAM_BYTES)
+}
+
+pub fn build_server_with_max_bind(
+    manager: Arc<SessionManager>,
+    server_id: String,
+    max_bind_bytes: usize,
+) -> RpcServer {
     let hook = vgi_rpc::OtelHook::new(vgi_rpc::OtelConfig {
         service_name: "adbc-proxy".to_string(),
         record_exceptions: false,
@@ -79,7 +89,7 @@ pub fn build_server(manager: Arc<SessionManager>, server_id: String) -> RpcServe
     register_open_connection(&mut server, manager.clone());
     register_session_operations(&mut server, manager.clone());
     register_connection_surface(&mut server, manager.clone());
-    register_statement_operations(&mut server, manager.clone());
+    register_statement_operations(&mut server, manager.clone(), max_bind_bytes);
     register_result_operations(&mut server, manager);
     server
 }
@@ -395,7 +405,11 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     ));
 }
 
-fn register_statement_operations(server: &mut RpcServer, manager: Arc<SessionManager>) {
+fn register_statement_operations(
+    server: &mut RpcServer,
+    manager: Arc<SessionManager>,
+    max_bind_bytes: usize,
+) {
     let set_option_manager = manager.clone();
     server.register(MethodInfo::unary(
         protocol::method::SET_STATEMENT_OPTION,
@@ -519,8 +533,11 @@ fn register_statement_operations(server: &mut RpcServer, manager: Arc<SessionMan
             let statement = session
                 .statement(string(request, "statement_id")?)
                 .map_err(adbc_rpc_error)?;
-            let mut reader = protocol::decode_batches(binary(request, "payload")?.to_vec())
-                .map_err(protocol_rpc_error)?;
+            let mut reader = protocol::decode_batches_ref_with_limit(
+                binary(request, "payload")?,
+                max_bind_bytes,
+            )
+            .map_err(protocol_rpc_error)?;
             let batch = reader
                 .next()
                 .ok_or(protocol::ProtocolError::EmptyStream)
@@ -551,8 +568,20 @@ fn register_statement_operations(server: &mut RpcServer, manager: Arc<SessionMan
             let statement = session
                 .statement(string(request, "statement_id")?)
                 .map_err(adbc_rpc_error)?;
-            let reader = protocol::decode_batches(binary(request, "payload")?.to_vec())
-                .map_err(protocol_rpc_error)?;
+            // An ADBC implementation may retain a bind-stream reader after
+            // this handler returns, so it must be owned. Decode eagerly from
+            // the borrowed request bytes, then retain only the decoded Arrow
+            // arrays rather than cloning and retaining the entire IPC payload.
+            let reader = protocol::decode_batches_ref_with_limit(
+                binary(request, "payload")?,
+                max_bind_bytes,
+            )
+            .map_err(protocol_rpc_error)?;
+            let schema = reader.schema();
+            let batches = reader
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(arrow_rpc_error)?;
+            let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), schema);
             statement
                 .statement
                 .lock()

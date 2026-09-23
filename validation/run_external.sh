@@ -250,7 +250,12 @@ listen = "127.0.0.1:{os.environ["VALIDATION_PORT"]}"
 session_ttl_seconds = 300
 session_reap_interval_seconds = 5
 require_authentication = {str(authenticated).lower()}
+request_timeout_seconds = {os.environ.get("ADBC_PROXY_VALIDATION_REQUEST_TIMEOUT_SECONDS", "300")}
 '''
+if value := os.environ.get("ADBC_PROXY_SERVER_MAX_BIND_BYTES", os.environ.get("ADBC_PROXY_MAX_BIND_BYTES")):
+    contents += f'max_bind_bytes = {int(value)}\n'
+if value := os.environ.get("ADBC_PROXY_VALIDATION_MAX_REQUEST_BODY_BYTES"):
+    contents += f'max_request_body_bytes = {int(value)}\n'
 if os.environ["VALIDATION_MODE"] == "load":
     contents += '''max_sessions = 2048
 max_sessions_per_principal = 2048
@@ -411,8 +416,12 @@ case "$mode" in
     uv run --project "$validation_root" --python 3.13 \
       python "$validation_root/load_test.py" "$@"
     ;;
+  large-payload)
+    uv run --project "$validation_root" --python 3.13 \
+      python "$validation_root/large_payload.py" "$@"
+    ;;
   *)
-    echo "Usage: $0 [example|smoke|foundry|load] [sqlite|duckdb|postgresql] [arguments...]" >&2
+    echo "Usage: $0 [example|smoke|foundry|load|large-payload] [sqlite|duckdb|postgresql] [arguments...]" >&2
     exit 2
     ;;
 esac

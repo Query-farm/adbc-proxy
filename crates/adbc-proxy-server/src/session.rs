@@ -119,7 +119,16 @@ pub struct ResultEntry {
     schema: SchemaRef,
     next_sequence: i64,
     last: Option<(i64, RecordBatch)>,
+    terminal_error: Option<(i64, AdbcError)>,
     finished: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ResourceCounts {
+    pub sessions: usize,
+    pub statements: usize,
+    pub results: usize,
+    pub opening_sessions: usize,
 }
 
 impl SessionManager {
@@ -266,7 +275,6 @@ impl SessionManager {
         let session = registry
             .sessions
             .get(id)
-            .cloned()
             .ok_or_else(|| not_found("session"))?;
         if session.principal != principal {
             return Err(AdbcError::with_message_and_status(
@@ -278,16 +286,21 @@ impl SessionManager {
             .last_used
             .lock()
             .map_err(|_| internal("session lease is poisoned"))?;
-        if last_used.elapsed() > self.ttl {
-            let removed = registry.sessions.remove(id);
+        // The registry owns one strong reference. Any additional reference
+        // denotes an operation that already acquired the session. A lease is
+        // an idle timeout, so a new request may refresh an otherwise-expired
+        // session while prior work is still in flight.
+        let already_in_flight = Arc::strong_count(session) > 1;
+        if last_used.elapsed() > self.ttl && !already_in_flight {
             drop(last_used);
+            let removed = registry.sessions.remove(id);
             drop(registry);
             drop(removed);
             return Err(not_found("expired session"));
         }
         *last_used = Instant::now();
         drop(last_used);
-        Ok(session)
+        Ok(Arc::clone(session))
     }
 
     pub fn close(&self, id: &str, principal: &str) -> Result<(), AdbcError> {
@@ -311,8 +324,9 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Remove expired leases. In-flight calls retain their `Arc<Session>` and
-    /// are allowed to finish; no subsequent call can reacquire the session.
+    /// Remove expired idle leases. A session with an in-flight operation is
+    /// retained even when the wall-clock TTL has elapsed, then becomes
+    /// eligible after the final active reference is released.
     pub fn reap_expired(&self) -> Result<usize, AdbcError> {
         let mut registry = self
             .registry
@@ -320,6 +334,12 @@ impl SessionManager {
             .map_err(|_| internal("session registry is poisoned"))?;
         let mut expired = Vec::new();
         for (id, session) in &registry.sessions {
+            // Do not expire a lease while a handler holds the session. The
+            // operation may run longer than the idle TTL; it becomes eligible
+            // as soon as the final in-flight reference is released.
+            if Arc::strong_count(session) > 1 {
+                continue;
+            }
             let last_used = session
                 .last_used
                 .lock()
@@ -349,6 +369,34 @@ impl SessionManager {
         drop(registry);
         drop(sessions);
         Ok(count)
+    }
+
+    /// Return aggregate handle counts without exposing principals or handle
+    /// identifiers. This is suitable for bounded-resource telemetry and
+    /// lifecycle assertions.
+    pub fn resource_counts(&self) -> Result<ResourceCounts, AdbcError> {
+        let registry = self
+            .registry
+            .lock()
+            .map_err(|_| internal("session registry is poisoned"))?;
+        let mut counts = ResourceCounts {
+            sessions: registry.sessions.len(),
+            opening_sessions: registry.opening_total,
+            ..ResourceCounts::default()
+        };
+        for session in registry.sessions.values() {
+            counts.statements += session
+                .statements
+                .lock()
+                .map_err(|_| internal("statement registry is poisoned"))?
+                .len();
+            counts.results += session
+                .results
+                .lock()
+                .map_err(|_| internal("result registry is poisoned"))?
+                .len();
+        }
+        Ok(counts)
     }
 
     #[cfg(test)]
@@ -490,6 +538,7 @@ impl Session {
                 schema: schema.clone(),
                 next_sequence: 0,
                 last: None,
+                terminal_error: None,
                 finished: false,
             })),
         );
@@ -526,6 +575,11 @@ impl ResultEntry {
         {
             return Ok(Some(batch.clone()));
         }
+        if let Some((error_sequence, error)) = &self.terminal_error
+            && sequence == *error_sequence
+        {
+            return Err(error.clone());
+        }
         if sequence != self.next_sequence {
             return Err(AdbcError::with_message_and_status(
                 format!(
@@ -544,7 +598,12 @@ impl ResultEntry {
                 self.next_sequence += 1;
                 Ok(Some(batch))
             }
-            Some(Err(error)) => Err(error.into()),
+            Some(Err(error)) => {
+                let error = AdbcError::from(error);
+                self.terminal_error = Some((sequence, error.clone()));
+                self.finished = true;
+                Err(error)
+            }
             None => {
                 self.finished = true;
                 self.last = None;

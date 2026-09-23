@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use adbc_proxy_server::backend::DriverManagerBackend;
 use adbc_proxy_server::config::{AuthConfig, Config, IrohConfig, TcpConfig, TcpTlsConfig};
-use adbc_proxy_server::service::build_server;
+use adbc_proxy_server::service::build_server_with_max_bind;
 use adbc_proxy_server::session::SessionManager;
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -59,7 +59,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_id = args
         .server_id
         .unwrap_or_else(|| format!("adbc-proxy-{}", std::process::id()));
-    let server = Arc::new(build_server(manager.clone(), server_id));
+    let server = Arc::new(build_server_with_max_bind(
+        manager.clone(),
+        server_id,
+        config.server.max_bind_bytes,
+    ));
 
     let state = HttpState::builder()
         .server(Arc::clone(&server))

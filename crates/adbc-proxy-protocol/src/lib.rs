@@ -1,7 +1,9 @@
 //! Versioned Arrow schemas and wire values for ADBC-over-VGI.
 
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use adbc_core::error::{Error as AdbcError, Status};
 use adbc_core::options::OptionValue;
@@ -21,6 +23,18 @@ pub const PROTOCOL_VERSION: &str = "0.1.0";
 /// Maximum encoded parameter stream accepted by the initial protocol binding.
 /// This makes the buffering behavior of `bind_stream` explicit and bounded.
 pub const MAX_BIND_STREAM_BYTES: usize = 64 * 1024 * 1024;
+/// Current deployed VGI Rust implementation's message compatibility ceiling.
+/// This is an implementation guard, not Arrow's fundamental body-length limit.
+pub const MAX_VGI_MESSAGE_BYTES: usize = u32::MAX as usize;
+/// Reserved space for the VGI Arrow envelope around a nested bind IPC stream.
+pub const BIND_ENVELOPE_HEADROOM_BYTES: usize = 1024 * 1024;
+/// Largest configurable monolithic bind stream in this protocol version.
+///
+/// `statement_binary_schema` carries the nested IPC stream in Arrow `Binary`,
+/// whose offsets are signed 32-bit. Supporting larger binds requires a
+/// protocol change to chunk/externalize them (preferred) or use `LargeBinary`.
+pub const MAX_CONFIGURABLE_BIND_BYTES: usize = i32::MAX as usize - BIND_ENVELOPE_HEADROOM_BYTES;
+const _: () = assert!(MAX_CONFIGURABLE_BIND_BYTES < MAX_VGI_MESSAGE_BYTES);
 
 pub mod method {
     pub const OPEN_CONNECTION: &str = "open_connection";
@@ -452,38 +466,99 @@ pub fn encode_batches<I>(schema: &Schema, batches: I) -> Result<Vec<u8>, Protoco
 where
     I: IntoIterator<Item = Result<RecordBatch, ArrowError>>,
 {
-    let mut writer = StreamWriter::try_new(Vec::new(), schema)?;
-    for batch in batches {
-        writer.write(&batch?)?;
-        let actual = writer.get_ref().len();
-        if actual > MAX_BIND_STREAM_BYTES {
-            return Err(ProtocolError::StreamTooLarge {
-                limit: MAX_BIND_STREAM_BYTES,
-                actual,
-            });
+    encode_batches_with_limit(schema, batches, MAX_BIND_STREAM_BYTES)
+}
+
+/// A writer which refuses an Arrow IPC write before growing past its budget.
+///
+/// Checking the `Vec` after `StreamWriter::write` is too late: a single large
+/// batch has already caused the full allocation by then. Keep the first
+/// attempted size separately so Arrow's wrapping of the I/O error can still be
+/// translated into the protocol's stable size-limit error.
+struct CappedBuffer {
+    bytes: Vec<u8>,
+    limit: usize,
+    rejected_actual: Arc<AtomicUsize>,
+}
+
+impl Write for CappedBuffer {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        let actual = self.bytes.len().saturating_add(input.len());
+        if actual > self.limit {
+            self.rejected_actual.store(actual, Ordering::Relaxed);
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "Arrow IPC stream exceeds configured byte limit",
+            ));
         }
+        self.bytes.extend_from_slice(input);
+        Ok(input.len())
     }
-    writer.finish()?;
-    let bytes = writer.into_inner()?;
-    if bytes.len() > MAX_BIND_STREAM_BYTES {
-        return Err(ProtocolError::StreamTooLarge {
-            limit: MAX_BIND_STREAM_BYTES,
-            actual: bytes.len(),
-        });
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
-    Ok(bytes)
+}
+
+pub fn encode_batches_with_limit<I>(
+    schema: &Schema,
+    batches: I,
+    limit: usize,
+) -> Result<Vec<u8>, ProtocolError>
+where
+    I: IntoIterator<Item = Result<RecordBatch, ArrowError>>,
+{
+    let rejected_actual = Arc::new(AtomicUsize::new(0));
+    let buffer = CappedBuffer {
+        bytes: Vec::new(),
+        limit,
+        rejected_actual: rejected_actual.clone(),
+    };
+    let map_arrow = |error| {
+        let actual = rejected_actual.load(Ordering::Relaxed);
+        if actual > limit {
+            ProtocolError::StreamTooLarge { limit, actual }
+        } else {
+            ProtocolError::Arrow(error)
+        }
+    };
+    let mut writer = StreamWriter::try_new(buffer, schema).map_err(&map_arrow)?;
+    for batch in batches {
+        writer.write(&batch?).map_err(&map_arrow)?;
+    }
+    writer.finish().map_err(&map_arrow)?;
+    Ok(writer.into_inner().map_err(&map_arrow)?.bytes)
 }
 
 pub fn decode_batches(
     bytes: Vec<u8>,
 ) -> Result<StreamReader<std::io::Cursor<Vec<u8>>>, ProtocolError> {
-    if bytes.len() > MAX_BIND_STREAM_BYTES {
-        return Err(ProtocolError::StreamTooLarge {
-            limit: MAX_BIND_STREAM_BYTES,
-            actual: bytes.len(),
-        });
-    }
+    check_stream_size(bytes.len(), MAX_BIND_STREAM_BYTES)?;
     Ok(StreamReader::try_new(std::io::Cursor::new(bytes), None)?)
+}
+
+/// Decode a bind payload without first cloning its enclosing VGI binary
+/// column. This is suitable when the reader is consumed before the request
+/// handler returns (not for `bind_stream`, whose ADBC reader may be retained).
+pub fn decode_batches_ref(
+    bytes: &[u8],
+) -> Result<StreamReader<std::io::Cursor<&[u8]>>, ProtocolError> {
+    decode_batches_ref_with_limit(bytes, MAX_BIND_STREAM_BYTES)
+}
+
+pub fn decode_batches_ref_with_limit(
+    bytes: &[u8],
+    limit: usize,
+) -> Result<StreamReader<std::io::Cursor<&[u8]>>, ProtocolError> {
+    check_stream_size(bytes.len(), limit)?;
+    Ok(StreamReader::try_new(std::io::Cursor::new(bytes), None)?)
+}
+
+fn check_stream_size(actual: usize, limit: usize) -> Result<(), ProtocolError> {
+    if actual > limit {
+        return Err(ProtocolError::StreamTooLarge { limit, actual });
+    }
+    Ok(())
 }
 
 /// Encode one result batch for the byte-stream unary pull operation.
@@ -587,13 +662,35 @@ pub fn batch_strings(batch: &RecordBatch) -> Result<HashMap<String, String>, Pro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::Int64Array;
+    use arrow_array::{BinaryArray, Int64Array};
+
+    fn binary_batch(payload_len: usize) -> RecordBatch {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "payload",
+            DataType::Binary,
+            false,
+        )]));
+        let payload = vec![0x5a; payload_len];
+        RecordBatch::try_new(
+            schema,
+            vec![Arc::new(BinaryArray::from_vec(vec![payload.as_slice()]))],
+        )
+        .unwrap()
+    }
 
     #[test]
     fn schema_round_trip() {
         let schema = Schema::new(vec![Field::new("value", DataType::Utf8, true)]);
         let decoded = decode_schema(&encode_schema(&schema).unwrap()).unwrap();
         assert_eq!(schema, decoded);
+    }
+
+    #[test]
+    fn monolithic_bind_ceiling_reserves_binary_and_vgi_headroom() {
+        assert_eq!(
+            MAX_CONFIGURABLE_BIND_BYTES + BIND_ENVELOPE_HEADROOM_BYTES,
+            i32::MAX as usize
+        );
     }
 
     #[test]
@@ -639,5 +736,83 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(decoded, batches);
+    }
+
+    #[test]
+    fn bind_arrow_ipc_cap_accepts_below_and_at_and_rejects_above() {
+        // This uses a deliberately small synthetic cap so the always-on test
+        // covers exact boundary semantics without a 64 MiB CI allocation.
+        let batch = binary_batch(16 * 1024);
+        let encoded =
+            encode_batches_with_limit(batch.schema().as_ref(), [Ok(batch.clone())], usize::MAX)
+                .unwrap();
+        let exact = encoded.len();
+
+        assert!(
+            encode_batches_with_limit(batch.schema().as_ref(), [Ok(batch.clone())], exact + 1,)
+                .is_ok()
+        );
+        assert!(
+            encode_batches_with_limit(batch.schema().as_ref(), [Ok(batch.clone())], exact,).is_ok()
+        );
+        assert!(matches!(
+            encode_batches_with_limit(batch.schema().as_ref(), [Ok(batch)], exact - 1),
+            Err(ProtocolError::StreamTooLarge { limit, actual })
+                if limit == exact - 1 && actual > limit
+        ));
+
+        assert!(check_stream_size(encoded.len(), encoded.len() + 1).is_ok());
+        assert!(check_stream_size(encoded.len(), encoded.len()).is_ok());
+        assert!(matches!(
+            check_stream_size(encoded.len(), encoded.len() - 1),
+            Err(ProtocolError::StreamTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn borrowed_bind_decode_does_not_require_payload_clone() {
+        let batch = binary_batch(1024);
+        let encoded = encode_batches(batch.schema().as_ref(), [Ok(batch.clone())]).unwrap();
+        let decoded = decode_batches_ref(&encoded)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, vec![batch]);
+    }
+
+    #[test]
+    #[ignore = "allocates roughly 200 MiB transiently; run explicitly for the real 64 MiB cap"]
+    fn heavy_real_bind_arrow_ipc_cap_below_at_and_above() {
+        fn encoded_len(payload_len: usize) -> usize {
+            let batch = binary_batch(payload_len);
+            encode_batches_with_limit(batch.schema().as_ref(), [Ok(batch)], usize::MAX)
+                .unwrap()
+                .len()
+        }
+
+        // Arrow IPC stream sizes are discrete because buffers are aligned, so
+        // there may be no valid stream whose length is exactly the byte cap.
+        // Find the largest representable stream below it and the first above;
+        // the exact raw-byte boundary itself is covered by check_stream_size.
+        let probe_payload = MAX_BIND_STREAM_BYTES - 4096;
+        let probe_len = encoded_len(probe_payload);
+        let candidate = probe_payload + (MAX_BIND_STREAM_BYTES - probe_len);
+        let mut below_payload = candidate;
+        while encoded_len(below_payload) > MAX_BIND_STREAM_BYTES {
+            below_payload -= 1;
+        }
+        let below_len = encoded_len(below_payload);
+        assert!(below_len <= MAX_BIND_STREAM_BYTES);
+        assert!(encoded_len(below_payload + 1) > MAX_BIND_STREAM_BYTES);
+
+        let below = binary_batch(below_payload);
+        assert!(encode_batches(below.schema().as_ref(), [Ok(below)]).is_ok());
+        assert!(check_stream_size(MAX_BIND_STREAM_BYTES, MAX_BIND_STREAM_BYTES).is_ok());
+        let above = binary_batch(below_payload + 1);
+        assert!(matches!(
+            encode_batches(above.schema().as_ref(), [Ok(above)]),
+            Err(ProtocolError::StreamTooLarge { limit, actual })
+                if limit == MAX_BIND_STREAM_BYTES && actual > limit
+        ));
     }
 }

@@ -73,6 +73,28 @@ ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load postgresql \
   --workers 32 --duration-seconds 60 --rows 200000
 ```
 
+Exercise payload budgets and recovery with a CI-sized response limit:
+
+```sh
+./validation/run_external.sh large-payload sqlite --response-budget-mib 2
+ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh large-payload sqlite \
+  --response-budget-mib 2
+```
+
+Use `--heavy` for real near-64 MiB bind and bind-stream probes, or
+`--response-budget-mib 256` for the default HTTP response boundary. The
+following environment variables test non-default and deliberately mismatched
+client/server policy:
+
+- `ADBC_PROXY_MAX_BIND_BYTES`
+- `ADBC_PROXY_SERVER_MAX_BIND_BYTES`
+- `ADBC_PROXY_VALIDATION_MAX_REQUEST_BODY_BYTES`
+- `ADBC_PROXY_VALIDATION_REQUEST_TIMEOUT_SECONDS`
+
+HTTP-only `--wire-faults` covers oversized/truncated bodies, caller
+disconnect, timeout response, and recovery. Heavy cases are opt-in because
+they intentionally drive process memory to a high-water mark.
+
 Each worker opens an independent ordinary ADBC database, connection, and
 statement through the proxy, synchronizes with the other workers, then pulls
 and validates Arrow results repeatedly. Reports include connection latency,
@@ -102,7 +124,8 @@ The separate `external-validation` job:
 2. installs the matrix driver's pinned version with `dbc`;
 3. runs the smoke test against SQLite, DuckDB, and PostgreSQL;
 4. runs a small concurrent mTLS load gate so the harness cannot silently rot;
-5. runs Foundry against all three and archives each pytest result.
+5. runs payload-budget probes on all four transports plus HTTP wire faults;
+6. runs Foundry against all three and archives each pytest result.
 
 The Python manager and Arrow versions are pinned in `pyproject.toml`. The
 Foundry dependency is pinned to commit

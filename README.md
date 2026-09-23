@@ -21,9 +21,11 @@ research findings are in the
 Database results are not treated as an endless push stream. A downstream ADBC
 `execute` returns a pull-based Arrow stream. The proxy keeps that cursor on its
 owning worker and advances it only when the client asks for the next batch.
-Over HTTP, VGI continuation tokens turn each pull into a new request. TCP and
-Iroh keep one VGI byte stream associated with the ADBC connection and use a
-sequence-numbered unary pull for each downstream batch.
+Over HTTP, VGI continuation tokens turn each pull into a new request and carry
+native Arrow batches. The version-0.1 TCP/mTLS/Iroh path still uses a
+sequence-numbered unary pull with nested IPC. That compatibility path is being
+replaced by native VGI producer streams; see
+[the data-plane migration](docs/native-streaming.md).
 
 ## Workspace
 
@@ -43,6 +45,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 ./validation/run_external.sh foundry -q
 ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh load duckdb \
   --workers 32 --iterations 50
+./validation/run_external.sh large-payload sqlite --response-budget-mib 2
 ```
 
 The external tests load the exported C ABI with the Python ADBC driver manager,
@@ -94,6 +97,9 @@ options:
   `tls+tcp://`, or `iroh://<endpoint-id>` endpoint
 - `adbc.proxy.target`: administrator-defined target name, such as `sqlite`
 - `adbc.proxy.auth.bearer_token`: HTTP(S) bearer token
+- `adbc.proxy.request_timeout_ms`: positive per-RPC client timeout
+- `adbc.proxy.max_response_bytes`: HTTP encoded/decoded response budget
+- `adbc.proxy.max_bind_bytes`: client-side encoded bind budget, default 64 MiB
 - `adbc.proxy.tls.ca`, `.cert`, `.key`, and `.server_name`: mTLS files and
   verified server name for `tls+tcp://`
 - `adbc.proxy.iroh.secret_key`: optional stable client endpoint secret
@@ -130,9 +136,18 @@ quotas and lease reaping; graceful shutdown; health probes; and optional OTLP
 trace export. Unsupported downstream capabilities remain downstream
 `NOT_IMPLEMENTED` errors instead of being emulated.
 
+Iroh client resources are process-wide: databases with the same client
+identity, remote endpoint, direct address, and timeout share one authenticated
+physical connection while each ADBC connection receives an independent VGI
+stream.
+
 This is suitable for a bounded single-process deployment. It is not
 yet a transparent multi-replica service: live sessions are process-local and
 need ingress affinity, native drivers share the service process, and worker
-loss invalidates transactions. Parameter streams are buffered with a 64 MiB
-cap, and database-level cancellation is still the ADBC default no-op. See
+loss invalidates transactions. Parameter streams still use the version-0.1
+nested-IPC path; its independently enforced client/server budget defaults to
+64 MiB and is configurable, but large binds should wait for native VGI
+exchange streaming. A transport timeout cannot preempt a synchronous or hung
+native driver call, and database-level cancellation depends on downstream
+support. See
 [security and resource controls](docs/security.md) before deployment.

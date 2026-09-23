@@ -1,5 +1,7 @@
 //! ADBC 1.1 client driver for the ADBC proxy service.
 
+mod iroh_pool;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::str::FromStr;
@@ -21,7 +23,6 @@ use arrow_array::{
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use rustls::pki_types::pem::PemObject;
 use vgi_rpc_client::{HttpClient, RpcClient, RpcError, Transport};
-use vgi_rpc_iroh::{IrohClientOptions, IrohConnection};
 
 pub const DRIVER_NAME: &str = "adbc_driver_proxy";
 pub const OPTION_PROXY_URI: &str = "adbc.proxy.uri";
@@ -29,6 +30,7 @@ pub const OPTION_TARGET: &str = "adbc.proxy.target";
 pub const OPTION_BEARER_TOKEN: &str = "adbc.proxy.auth.bearer_token";
 pub const OPTION_REQUEST_TIMEOUT_MS: &str = "adbc.proxy.request_timeout_ms";
 pub const OPTION_MAX_RESPONSE_BYTES: &str = "adbc.proxy.max_response_bytes";
+pub const OPTION_MAX_BIND_BYTES: &str = "adbc.proxy.max_bind_bytes";
 pub const OPTION_TLS_CA: &str = "adbc.proxy.tls.ca";
 pub const OPTION_TLS_CERT: &str = "adbc.proxy.tls.cert";
 pub const OPTION_TLS_KEY: &str = "adbc.proxy.tls.key";
@@ -37,6 +39,7 @@ pub const OPTION_IROH_SECRET_KEY: &str = "adbc.proxy.iroh.secret_key";
 pub const OPTION_IROH_DIRECT_ADDRESS: &str = "adbc.proxy.iroh.direct_address";
 const DEFAULT_REQUEST_TIMEOUT_MS: i64 = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES: i64 = 256 * 1024 * 1024;
+const DEFAULT_MAX_BIND_BYTES: i64 = protocol::MAX_BIND_STREAM_BYTES as i64;
 
 #[derive(Default)]
 pub struct ProxyDriver;
@@ -113,6 +116,12 @@ impl ProxyDatabase {
         if key == OPTION_MAX_RESPONSE_BYTES && value < 65_536 {
             return Err(invalid(format!("option {key:?} must be at least 65536")));
         }
+        if key == OPTION_MAX_BIND_BYTES && value > protocol::MAX_CONFIGURABLE_BIND_BYTES {
+            return Err(invalid(format!(
+                "option {key:?} must not exceed {}",
+                protocol::MAX_CONFIGURABLE_BIND_BYTES
+            )));
+        }
         Ok(value)
     }
 
@@ -176,6 +185,8 @@ impl Database for ProxyDatabase {
             self.proxy_positive_int(OPTION_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)?;
         let max_response_bytes =
             self.proxy_positive_int(OPTION_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESPONSE_BYTES)?;
+        let max_bind_bytes =
+            self.proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)?;
         let transport_options = TransportOptions {
             tls_ca: self.optional_string(OPTION_TLS_CA)?,
             tls_cert: self.optional_string(OPTION_TLS_CERT)?,
@@ -199,6 +210,7 @@ impl Database for ProxyDatabase {
             connection_options,
             request_timeout_ms,
             max_response_bytes,
+            max_bind_bytes,
             transport_options,
         })?;
         Ok(ProxyConnection {
@@ -461,8 +473,12 @@ impl Optionable for ProxyStatement {
 
 impl Statement for ProxyStatement {
     fn bind(&mut self, batch: RecordBatch) -> Result<()> {
-        let bytes = protocol::encode_batches(batch.schema().as_ref(), [Ok(batch)])
-            .map_err(|error| invalid(error.to_string()))?;
+        let bytes = protocol::encode_batches_with_limit(
+            batch.schema().as_ref(),
+            [Ok(batch)],
+            self.remote.max_bind_bytes,
+        )
+        .map_err(|error| invalid(error.to_string()))?;
         let request =
             statement_binary_request(&self.remote.session_id, &self.statement_id, &bytes)?;
         self.remote.call(protocol::method::BIND, &request)?;
@@ -471,8 +487,12 @@ impl Statement for ProxyStatement {
 
     fn bind_stream(&mut self, reader: Box<dyn RecordBatchReader + Send>) -> Result<()> {
         let schema = reader.schema();
-        let bytes = protocol::encode_batches(schema.as_ref(), reader)
-            .map_err(|error| invalid(error.to_string()))?;
+        let bytes = protocol::encode_batches_with_limit(
+            schema.as_ref(),
+            reader,
+            self.remote.max_bind_bytes,
+        )
+        .map_err(|error| invalid(error.to_string()))?;
         let request =
             statement_binary_request(&self.remote.session_id, &self.statement_id, &bytes)?;
         self.remote.call(protocol::method::BIND_STREAM, &request)?;
@@ -594,6 +614,7 @@ struct RemoteConnectionOptions {
     connection_options: Vec<protocol::WireOption>,
     request_timeout_ms: usize,
     max_response_bytes: usize,
+    max_bind_bytes: usize,
     transport_options: TransportOptions,
 }
 
@@ -607,9 +628,7 @@ struct HttpTransport {
 
 struct ByteTransport {
     client: Mutex<RpcClient>,
-    _runtime: Option<tokio::runtime::Runtime>,
-    _iroh_endpoint: Option<iroh::Endpoint>,
-    _iroh_connection: Option<IrohConnection>,
+    _iroh_lease: Option<iroh_pool::Lease>,
 }
 
 enum RemoteTransport {
@@ -659,9 +678,7 @@ impl RemoteTransport {
         };
         Ok(Self::Byte(ByteTransport {
             client: Mutex::new(configure_rpc_client(client)),
-            _runtime: None,
-            _iroh_endpoint: None,
-            _iroh_connection: None,
+            _iroh_lease: None,
         }))
     }
 
@@ -689,47 +706,32 @@ impl RemoteTransport {
                 .ok_or_else(|| invalid("Iroh endpoint ID is required"))?,
         )
         .map_err(|error| invalid(format!("invalid Iroh endpoint ID: {error}")))?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .map_err(|error| internal(format!("create Iroh runtime: {error}")))?;
-        let (iroh_endpoint, connection, client) = runtime.block_on(async move {
-            let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::N0);
-            if let Some(secret) = options.iroh_secret_key {
-                let secret = iroh::SecretKey::from_str(secret.trim())
-                    .map_err(|error| invalid(format!("invalid Iroh client secret key: {error}")))?;
-                builder = builder.secret_key(secret);
-            }
-            let local = builder
-                .bind()
-                .await
-                .map_err(|error| internal(format!("bind Iroh client endpoint: {error}")))?;
-            let mut remote = iroh::EndpointAddr::new(remote_id);
-            if let Some(address) = options.iroh_direct_address {
-                let address = address
+        let secret_key = options
+            .iroh_secret_key
+            .map(|secret| {
+                iroh::SecretKey::from_str(secret.trim())
+                    .map_err(|error| invalid(format!("invalid Iroh client secret key: {error}")))
+            })
+            .transpose()?;
+        let direct_address = options
+            .iroh_direct_address
+            .map(|address| {
+                address
                     .parse()
-                    .map_err(|error| invalid(format!("invalid Iroh direct address: {error}")))?;
-                remote = remote.with_ip_addr(address);
-            }
-            let connection = IrohConnection::connect_addr(
-                local.clone(),
-                remote,
-                IrohClientOptions::default().with_rpc_timeout(request_timeout),
-            )
-            .await
-            .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-            let client = connection
-                .open_client()
-                .await
-                .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
-            Ok::<_, Error>((local, connection, client))
-        })?;
+                    .map_err(|error| invalid(format!("invalid Iroh direct address: {error}")))
+            })
+            .transpose()?;
+        let pooled = iroh_pool::open_client(iroh_pool::Config {
+            remote_id,
+            direct_address,
+            secret_key,
+            rpc_timeout: request_timeout,
+        })
+        .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
+        let (client, lease) = pooled.into_parts();
         Ok(Self::Byte(ByteTransport {
             client: Mutex::new(configure_rpc_client(client)),
-            _runtime: Some(runtime),
-            _iroh_endpoint: Some(iroh_endpoint),
-            _iroh_connection: Some(connection),
+            _iroh_lease: Some(lease),
         }))
     }
 
@@ -775,6 +777,7 @@ impl RemoteTransport {
 struct RemoteConnection {
     transport: RemoteTransport,
     session_id: String,
+    max_bind_bytes: usize,
 }
 
 impl RemoteConnection {
@@ -787,6 +790,7 @@ impl RemoteConnection {
             connection_options,
             request_timeout_ms,
             max_response_bytes,
+            max_bind_bytes,
             transport_options,
         } = options;
         let request_timeout = Duration::from_millis(request_timeout_ms as u64);
@@ -816,6 +820,7 @@ impl RemoteConnection {
         Ok(Self {
             transport,
             session_id,
+            max_bind_bytes,
         })
     }
 
@@ -1517,6 +1522,7 @@ fn is_proxy_database_option(key: &str) -> bool {
             | OPTION_BEARER_TOKEN
             | OPTION_REQUEST_TIMEOUT_MS
             | OPTION_MAX_RESPONSE_BYTES
+            | OPTION_MAX_BIND_BYTES
             | OPTION_TLS_CA
             | OPTION_TLS_CERT
             | OPTION_TLS_KEY
@@ -1588,6 +1594,7 @@ mod tests {
     fn proxy_options_are_not_forwarded() {
         assert!(is_proxy_database_option(OPTION_PROXY_URI));
         assert!(is_proxy_database_option(OPTION_TARGET));
+        assert!(is_proxy_database_option(OPTION_MAX_BIND_BYTES));
         assert!(!is_proxy_database_option("username"));
     }
 
@@ -1605,5 +1612,43 @@ mod tests {
             .set_option(OptionDatabase::Other(OPTION_TARGET.into()), "sqlite".into())
             .unwrap();
         database.validate().unwrap();
+    }
+
+    #[test]
+    fn max_bind_bytes_is_positive_and_below_current_protocol_ceiling() {
+        let mut database = ProxyDatabase::default();
+        assert_eq!(
+            database
+                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .unwrap(),
+            protocol::MAX_BIND_STREAM_BYTES
+        );
+        database.options.insert(
+            OPTION_MAX_BIND_BYTES.into(),
+            OptionValue::Int(protocol::MAX_CONFIGURABLE_BIND_BYTES as i64),
+        );
+        assert_eq!(
+            database
+                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .unwrap(),
+            protocol::MAX_CONFIGURABLE_BIND_BYTES
+        );
+        database.options.insert(
+            OPTION_MAX_BIND_BYTES.into(),
+            OptionValue::Int(protocol::MAX_CONFIGURABLE_BIND_BYTES as i64 + 1),
+        );
+        assert!(
+            database
+                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .is_err()
+        );
+        database
+            .options
+            .insert(OPTION_MAX_BIND_BYTES.into(), OptionValue::Int(0));
+        assert!(
+            database
+                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .is_err()
+        );
     }
 }

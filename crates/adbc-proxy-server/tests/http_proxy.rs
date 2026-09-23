@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use adbc_core::{
 };
 use adbc_driver_proxy::{
     OPTION_BEARER_TOKEN, OPTION_IROH_DIRECT_ADDRESS, OPTION_TARGET, OPTION_TLS_CA, OPTION_TLS_CERT,
-    OPTION_TLS_KEY, OPTION_TLS_SERVER_NAME, ProxyDriver,
+    OPTION_TLS_KEY, OPTION_TLS_SERVER_NAME, ProxyConnection, ProxyDriver,
 };
 use adbc_proxy_server::backend::{Backend, BackendConnection, BackendStatement};
 use adbc_proxy_server::config::TargetConfig;
@@ -679,11 +679,20 @@ async fn ordinary_adbc_client_reads_multiple_batches_over_raw_iroh() {
         .copied()
         .find(|address| address.is_ipv4())
         .unwrap();
+    let policy_calls = Arc::new(AtomicUsize::new(0));
+    let primary = vgi_rpc::peer_identity_primary("iroh");
+    let counted_policy: vgi_rpc::PeerAuthenticationPolicy = {
+        let policy_calls = policy_calls.clone();
+        Arc::new(move |evidence, auth| {
+            policy_calls.fetch_add(1, Ordering::SeqCst);
+            primary(evidence, auth)
+        })
+    };
     let server = IrohServer::with_options(
         Arc::new(build_server(fake_manager(true), "iroh-worker".into())),
         IrohServerOptions::default()
             .with_issuer("test.mesh")
-            .with_policy(vgi_rpc::peer_identity_primary("iroh")),
+            .with_policy(counted_policy),
     );
     let shutdown = CancellationToken::new();
     let serve_shutdown = shutdown.clone();
@@ -691,19 +700,50 @@ async fn ordinary_adbc_client_reads_multiple_batches_over_raw_iroh() {
         server.serve(endpoint, serve_shutdown).await.unwrap();
     });
 
-    let values = tokio::task::spawn_blocking(move || {
-        query_values(
-            format!("iroh://{endpoint_id}"),
-            vec![(
+    let value_sets = tokio::task::spawn_blocking(move || -> AdbcResult<Vec<Vec<i64>>> {
+        let mut driver = ProxyDriver;
+        let database = driver.new_database_with_opts([
+            (OptionDatabase::Uri, format!("iroh://{endpoint_id}").into()),
+            (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
+            (
                 OptionDatabase::Other(OPTION_IROH_DIRECT_ADDRESS.into()),
                 direct_address.to_string().into(),
-            )],
-        )
+            ),
+        ])?;
+        // Both ADBC connections stay alive concurrently. They must receive
+        // independent VGI streams while sharing one authenticated QUIC link.
+        let mut first = database.new_connection()?;
+        let mut second = database.new_connection()?;
+        fn read(connection: &mut ProxyConnection) -> AdbcResult<Vec<i64>> {
+            let mut statement = connection.new_statement()?;
+            statement.set_sql_query("select value from test")?;
+            let mut values = Vec::new();
+            for batch in statement.execute()? {
+                let batch = batch.map_err(adbc_core::error::Error::from)?;
+                values.extend(
+                    batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .unwrap()
+                        .values()
+                        .iter()
+                        .copied(),
+                );
+            }
+            Ok(values)
+        }
+        Ok(vec![read(&mut first)?, read(&mut second)?])
     })
     .await
     .unwrap()
     .unwrap();
-    assert_eq!(values, vec![1, 2, 3, 4]);
+    assert_eq!(value_sets, vec![vec![1, 2, 3, 4], vec![1, 2, 3, 4]]);
+    assert_eq!(
+        policy_calls.load(Ordering::SeqCst),
+        1,
+        "two ADBC connections should reuse one authenticated Iroh connection"
+    );
     shutdown.cancel();
     task.await.unwrap();
 }

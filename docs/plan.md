@@ -56,15 +56,16 @@ Status: complete.
 
 Status: substantially complete for the ADBC 1.1 Rust traits and validated
 through the exported C ABI. Bind-stream is currently bounded buffering rather
-than incremental upload; database-level cancellation remains a no-op.
+than native VGI exchange; database cancellation depends on downstream support.
 
 - Typed database, connection, and statement option get/set.
-- Bind and bind-stream, currently with a 64 MiB in-memory IPC bound.
+- Bind and bind-stream with independently enforced configurable client/server
+  budgets (64 MiB default) and pre-allocation rejection.
 - Metadata: info, objects, table schema/types, statistics.
 - Execute schema, execute partitions, and read partition.
 - Substrait plans and rich error details.
 - External smoke and ADBC Driver Foundry connection/query/statement suites.
-- Remaining: Apache C++ `c/validation` fixture and cancellation/fault tests.
+- Remaining: Apache C++ `c/validation` fixture and native VGI bind exchange.
 
 ### M3: service hardening
 
@@ -78,8 +79,8 @@ routing and trace-parent propagation remain.
 - Graceful drain and explicit connection-loss semantics.
 - Remaining: W3C OpenTelemetry parent propagation and downstream database
   spans.
-- Replay and concurrent load tests are present; multi-hour soak,
-  fault-injection, and credential-redaction tests remain.
+- Replay, concurrent load, payload-boundary, and deterministic fault-injection
+  tests are present; multi-hour soak and credential-redaction tests remain.
 
 ### M4: additional transports
 
@@ -89,6 +90,24 @@ Status: TCP/mTLS and Iroh complete.
 - Raw stateful Iroh direct-worker transport with endpoint authorization.
 - Unix/subprocess/shared-memory profiles for local use.
 - Optional HTTP bootstrap followed by a negotiated direct data endpoint.
+
+### M5: native VGI data plane and worker isolation
+
+Status: designed; HTTP query results already use the target producer model.
+
+- Replace TCP/mTLS/Iroh `READ_RESULT_BATCH` nesting with VGI producers that
+  emit downstream `RecordBatch` values directly.
+- Replace nested-IPC bind/bind-stream with runtime-schema VGI exchanges,
+  bounded channel backpressure, explicit finish, and structured final errors.
+- Add owned/dedicated VGI stream leases: pooled QUIC streams for Iroh and a
+  bounded dedicated-connection strategy for TCP/mTLS.
+- Move each downstream session behind a bounded worker/actor so transport
+  deadlines can respond independently and cancellation does not queue behind
+  a blocking driver call.
+- Use a worker process boundary when hard termination of a hung or hostile
+  native driver is required.
+
+See [the native streaming design](native-streaming.md).
 
 ## Acceptance criteria for M1
 

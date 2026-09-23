@@ -71,6 +71,7 @@ pub struct ServerConfig {
     pub allow_insecure_remote: bool,
     pub request_timeout_seconds: u64,
     pub max_request_body_bytes: usize,
+    pub max_bind_bytes: usize,
     pub max_sessions: usize,
     pub max_sessions_per_principal: usize,
     pub max_statements_per_session: usize,
@@ -86,7 +87,15 @@ impl Default for ServerConfig {
             require_authentication: true,
             allow_insecure_remote: false,
             request_timeout_seconds: 300,
-            max_request_body_bytes: 64 * 1024 * 1024,
+            // The bind limit applies to the nested Arrow IPC stream. HTTP
+            // carries that stream inside a VGI Arrow request, so an identical
+            // 64 MiB outer limit makes valid near-cap binds unreachable and
+            // triggers VGI's unsupported upload fallback. Keep one MiB of
+            // bounded envelope headroom; the protocol still enforces 64 MiB
+            // on the inner bind payload.
+            max_request_body_bytes: adbc_proxy_protocol::MAX_BIND_STREAM_BYTES
+                + adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES,
+            max_bind_bytes: adbc_proxy_protocol::MAX_BIND_STREAM_BYTES,
             max_sessions: 1024,
             max_sessions_per_principal: 32,
             max_statements_per_session: 64,
@@ -189,6 +198,28 @@ impl Config {
         }
         if self.server.max_request_body_bytes == 0 {
             return Err("server.max_request_body_bytes must be positive".into());
+        }
+        if self.server.max_bind_bytes == 0 {
+            return Err("server.max_bind_bytes must be positive".into());
+        }
+        if self.server.max_bind_bytes > adbc_proxy_protocol::MAX_CONFIGURABLE_BIND_BYTES {
+            return Err(format!(
+                "server.max_bind_bytes must not exceed {}",
+                adbc_proxy_protocol::MAX_CONFIGURABLE_BIND_BYTES
+            )
+            .into());
+        }
+        let required_http_bytes = self
+            .server
+            .max_bind_bytes
+            .checked_add(adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES)
+            .ok_or("server.max_bind_bytes plus VGI envelope headroom overflows usize")?;
+        if self.server.max_request_body_bytes < required_http_bytes {
+            return Err(format!(
+                "server.max_request_body_bytes must be at least server.max_bind_bytes + {} bytes of VGI envelope headroom ({required_http_bytes})",
+                adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES
+            )
+            .into());
         }
         self.server
             .session_limits()
@@ -333,12 +364,49 @@ fn validate_options(
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::{Config, ServerConfig};
 
     const TARGET: &str = r#"
 [targets.sqlite]
 driver = "adbc_driver_sqlite"
 "#;
+
+    #[test]
+    fn default_http_request_budget_includes_bounded_vgi_envelope_headroom() {
+        assert_eq!(
+            ServerConfig::default().max_request_body_bytes,
+            adbc_proxy_protocol::MAX_BIND_STREAM_BYTES
+                + adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES
+        );
+    }
+
+    #[test]
+    fn validates_configurable_bind_limit_and_http_envelope_relationship() {
+        let headroom = adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES;
+        let valid = format!(
+            "[server]\nrequire_authentication = false\nmax_bind_bytes = 1024\nmax_request_body_bytes = {}\n{TARGET}",
+            headroom + 1024
+        );
+        let config = Config::from_toml(&valid).unwrap();
+        assert_eq!(config.server.max_bind_bytes, 1024);
+
+        let insufficient = format!(
+            "[server]\nrequire_authentication = false\nmax_bind_bytes = 1024\nmax_request_body_bytes = {}\n{TARGET}",
+            headroom + 1023
+        );
+        assert!(Config::from_toml(&insufficient).is_err());
+
+        let zero =
+            format!("[server]\nrequire_authentication = false\nmax_bind_bytes = 0\n{TARGET}");
+        assert!(Config::from_toml(&zero).is_err());
+
+        let above_vgi = format!(
+            "[server]\nrequire_authentication = false\nmax_bind_bytes = {}\nmax_request_body_bytes = {}\n{TARGET}",
+            adbc_proxy_protocol::MAX_CONFIGURABLE_BIND_BYTES + 1,
+            adbc_proxy_protocol::MAX_VGI_MESSAGE_BYTES
+        );
+        assert!(Config::from_toml(&above_vgi).is_err());
+    }
 
     #[test]
     fn rejects_unknown_fields_and_missing_authentication() {

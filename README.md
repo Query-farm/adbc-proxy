@@ -1,13 +1,24 @@
-# ADBC Proxy
+<p align="center">
+  <a href="https://query.farm">
+    <img src="https://query.farm/media-kit/logo/wordmark-adaptive.svg" alt="Query.Farm" width="280">
+  </a>
+</p>
 
-[![CI](https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<h1 align="center">ADBC Proxy</h1>
 
-ADBC Proxy makes server-installed [ADBC](https://arrow.apache.org/adbc/)
+<p align="center">
+  <a href="https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://arrow.apache.org/adbc/current/"><img src="https://img.shields.io/badge/Apache%20Arrow-ADBC-00A4E4?logo=apachearrow&amp;logoColor=white" alt="Apache Arrow ADBC"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.97%2B-000000?logo=rust&amp;logoColor=white" alt="Rust 1.97 or newer"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0 license"></a>
+</p>
+
+ADBC Proxy makes server-installed [ADBC](https://arrow.apache.org/adbc/current/)
 drivers available to ordinary ADBC applications over a network. Applications
 load the proxy's ADBC driver and continue to use the standard ADBC API; the
 service owns the downstream database connection, statements, transactions,
-and Arrow result streams.
+and [Apache Arrow](https://arrow.apache.org/) result streams. The wire protocol
+runs on [VGI-RPC](https://vgi-rpc.query.farm/).
 
 ```text
 ADBC application
@@ -25,16 +36,22 @@ published binary packages are not available yet.
 
 - Standard ADBC 1.1 client interface and C entrypoint
   `AdbcDriverProxyInit`.
-- Server-side loading of SQLite, DuckDB, PostgreSQL, and other ADBC drivers.
-- SQL and Substrait statements, prepared statements, parameter binding,
-  transactions, metadata, statistics, partitioned results, and cancellation.
+- Server-side loading of [SQLite](https://www.sqlite.org/),
+  [DuckDB](https://duckdb.org/), [PostgreSQL](https://www.postgresql.org/), and
+  other ADBC drivers.
+- SQL and [Substrait](https://substrait.io/) statements, prepared statements,
+  parameter binding, transactions, metadata, statistics, partitioned results,
+  and cancellation.
 - Pull-based native Arrow record-batch streaming without nesting Arrow IPC
   inside Arrow values.
-- HTTP(S), persistent TCP, mutual-TLS TCP, and authenticated Iroh transports.
-- Static bearer-token or JWT/JWKS authentication for HTTP, SPIFFE identities
-  for mTLS, and endpoint-key identities for Iroh.
+- HTTP(S), persistent TCP, mutual-TLS TCP, and authenticated
+  [Iroh](https://www.iroh.computer/) transports.
+- Static bearer-token or JWT/JWKS authentication for HTTP,
+  [SPIFFE](https://spiffe.io/) identities for mTLS, and endpoint-key identities
+  for Iroh.
 - Per-principal target authorization, resource quotas, deadlines, session
-  expiry, graceful shutdown, structured ADBC errors, and OpenTelemetry traces.
+  expiry, graceful shutdown, structured ADBC errors, and
+  [OpenTelemetry](https://opentelemetry.io/) traces.
 
 Capabilities still depend on the selected downstream driver. Unsupported
 operations are returned as ADBC `NOT_IMPLEMENTED` errors.
@@ -45,8 +62,9 @@ The example below runs the proxy against SQLite on the same machine.
 
 ### 1. Install prerequisites
 
-Install Rust 1.97 or newer and [`dbc`](https://docs.columnar.tech/dbc/), then
-install the downstream SQLite driver:
+Install [Rust 1.97 or newer](https://www.rust-lang.org/tools/install) and
+[`dbc`](https://docs.columnar.tech/dbc/), then install the downstream SQLite
+driver:
 
 ```console
 dbc install sqlite --level user
@@ -93,7 +111,9 @@ curl --fail http://127.0.0.1:8080/readyz
 
 ### 4. Connect from Python
 
-Install the standard Python ADBC driver manager and PyArrow:
+Install the standard
+[Python ADBC driver manager](https://arrow.apache.org/adbc/current/python/api/adbc_driver_manager.html)
+and [PyArrow](https://arrow.apache.org/docs/python/):
 
 ```console
 python3 -m pip install adbc-driver-manager pyarrow
@@ -291,7 +311,7 @@ ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load sqlite \
 
 See the [validation guide](validation/README.md) for prerequisites, transport
 selection, payload-boundary testing, fault injection, load testing, and the
-ADBC Driver Foundry suite.
+[ADBC Driver Foundry](https://adbc-drivers.org/) suite.
 
 ## Repository layout
 
@@ -305,5 +325,7 @@ ADBC Driver Foundry suite.
 ## License
 
 Copyright 2026 [Query Farm LLC](https://query.farm).
+
+[![Built with Query.Farm](https://query.farm/media-kit/shields/built-with-query-farm.svg)](https://query.farm)
 
 Licensed under the [Apache License, Version 2.0](LICENSE).

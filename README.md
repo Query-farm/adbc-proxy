@@ -45,8 +45,8 @@ published binary packages are not available yet.
   and cancellation.
 - Pull-based native Arrow record-batch streaming without nesting Arrow IPC
   inside Arrow values.
-- HTTP(S), persistent TCP, mutual-TLS TCP, and authenticated
-  [Iroh](https://www.iroh.computer/) transports.
+- HTTP(S), persistent TCP, mutual-TLS TCP, and authenticated QUIC connectivity
+  through [Iroh](https://www.iroh.computer/).
 - Static bearer-token or JWT/JWKS authentication for HTTP,
   [SPIFFE](https://spiffe.io/) identities for mTLS, and endpoint-key identities
   for Iroh.
@@ -243,7 +243,7 @@ Pass these as ADBC database options when opening the proxy driver:
 | `http://` / `https://` | Static bearer token or JWT | HTTP ingress, reverse proxies, and service meshes |
 | `tcp://host:port` | None | Loopback-only development and trusted local routing |
 | `tls+tcp://host:port` | Mutual TLS with a verified SPIFFE identity | Direct production TCP |
-| `iroh://<endpoint-id>` | Cryptographic Iroh endpoint identity | Direct authenticated QUIC connectivity |
+| `iroh://<endpoint-id>` | Cryptographic [Iroh](https://www.iroh.computer/) endpoint identity | Authenticated QUIC with direct paths and relay fallback |
 
 The server's HTTP listener is plaintext. Terminate TLS in a reverse proxy,
 sidecar, or service mesh and keep the server listener on loopback. Setting
@@ -252,9 +252,10 @@ does not add TLS.
 
 Plain TCP cannot be used when authentication is required. Production TCP uses
 the `[tcp.tls]` server configuration and the four `adbc.proxy.tls.*` client
-options. Iroh servers map allowed client endpoint IDs to principals in
-`iroh.principals`; persist the server secret-key file so its endpoint ID stays
-stable.
+options. [Iroh](https://www.iroh.computer/) provides authenticated QUIC
+connections with direct paths and relay fallback. Proxy servers map allowed
+client endpoint IDs to principals in `iroh.principals`; persist the server
+secret-key file so its endpoint ID stays stable.
 
 ## Deployment model
 

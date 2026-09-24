@@ -35,11 +35,12 @@ from .proxy import get_quirks
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     adbc_drivers_validation.tests.conftest.pytest_addoption(parser)
+    parser.addoption("--vendor-version", action="store", default=None)
 
 
 @pytest.fixture(scope="session")
-def driver(request: pytest.FixtureRequest):
-    quirks = get_quirks()
+def driver(request: pytest.FixtureRequest, pytestconfig: pytest.Config):
+    quirks = get_quirks(pytestconfig.getoption("vendor_version"))
     assert request.param.startswith(f"{quirks.name}:")
     return quirks
 

@@ -16,7 +16,7 @@
 -->
 
 <p align="center">
-  <img src=".github/assets/grainlift-elevator-logo.svg" alt="Grainlift — networked ADBC" width="620">
+  <img src=".github/assets/grainlift-grain-elevator-logo.svg" alt="Grainlift" width="620">
 </p>
 
 <p align="center">

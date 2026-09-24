@@ -1,0 +1,79 @@
+<!--
+  Copyright (c) 2026 ADBC Drivers Contributors
+  Copyright (c) 2026 Query Farm LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">Grainlift</title>
+  <desc id="desc">A cluster of steel grain silos connected to a tall bucket elevator beside the Grainlift wordmark.</desc>
+
+  <style>
+    .wordmark { fill: #211a12; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 112px; font-weight: 750; letter-spacing: -4px; }
+    .bin { fill: #f7f2e9; stroke: #7a5230; stroke-width: 5; stroke-linejoin: round; }
+    .roof { fill: #d8cdbd; stroke: #7a5230; stroke-width: 5; stroke-linejoin: round; }
+    .tower { fill: #d9a441; stroke: #7a5230; stroke-width: 5; stroke-linejoin: round; }
+    .structure { fill: none; stroke: #7a5230; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+    .rib { fill: none; stroke: #b9a991; stroke-width: 2.5; opacity: 0.78; }
+    .lift-flow { fill: none; stroke: #00a4e4; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+    .field { fill: none; stroke: #5d8467; stroke-width: 7; stroke-linecap: round; }
+
+    @media (prefers-color-scheme: dark) {
+      .wordmark { fill: #f4ece0; }
+      .bin { fill: #2c2924; stroke: #d6a863; }
+      .roof { fill: #4b443b; stroke: #edc477; }
+      .tower { fill: #9c6b29; stroke: #edc477; }
+      .structure { stroke: #edc477; }
+      .rib { stroke: #a99782; }
+      .field { stroke: #80ad8b; }
+    }
+  </style>
+
+  <g transform="translate(10 11)">
+    <!-- Rear center bin -->
+    <path class="bin" d="M69 188 V79 H141 V188 Z"/>
+    <path class="roof" d="M65 79 L105 47 L145 79 Z"/>
+    <path class="rib" d="M81 78 V184 M93 60 V184 M105 51 V184 M117 60 V184 M129 78 V184"/>
+
+    <!-- Left and right bins -->
+    <path class="bin" d="M7 188 V104 H72 V188 Z"/>
+    <path class="roof" d="M3 104 L39.5 76 L76 104 Z"/>
+    <path class="rib" d="M18 102 V184 M29 84 V184 M40 80 V184 M51 84 V184 M62 102 V184"/>
+
+    <path class="bin" d="M137 188 V98 H202 V188 Z"/>
+    <path class="roof" d="M133 98 L169.5 69 L206 98 Z"/>
+    <path class="rib" d="M148 96 V184 M159 78 V184 M170 73 V184 M181 78 V184 M192 96 V184"/>
+
+    <!-- Smaller foreground bin -->
+    <path class="bin" d="M56 188 V123 H120 V188 Z"/>
+    <path class="roof" d="M52 123 L88 94 L124 123 Z"/>
+    <path class="rib" d="M67 121 V184 M78 103 V184 M89 98 V184 M100 103 V184 M111 121 V184"/>
+
+    <!-- Conveyor galleries feed the tall bucket elevator -->
+    <path class="structure" d="M40 74 L181 43 M104 46 L181 35"/>
+    <path class="structure" d="M44 84 L181 54" opacity="0.65"/>
+
+    <!-- Bucket elevator tower, platforms, and supports -->
+    <path class="tower" d="M180 188 V34 H203 V188 Z"/>
+    <path class="tower" d="M173 34 V17 H210 V34 Z"/>
+    <path class="structure" d="M169 17 H214 M174 47 H210 M174 78 H210 M178 188 L169 205 M205 188 L214 205"/>
+    <path class="structure" d="M180 64 L203 47 M180 95 L203 78 M180 126 L203 109 M180 157 L203 140" stroke-width="3" opacity="0.72"/>
+    <path class="lift-flow" d="M192 164 V51 M185 58 L192 50 L199 58"/>
+
+    <path class="structure" d="M2 188 H218"/>
+    <path class="field" d="M4 204 C39 185 74 185 109 204 C144 223 181 219 218 198"/>
+    <path class="field" d="M10 216 C40 199 70 199 100 215" opacity="0.6"/>
+  </g>
+
+  <text class="wordmark" x="252" y="157">Grainlift</text>
+</svg>

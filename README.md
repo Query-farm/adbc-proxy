@@ -46,6 +46,38 @@ Clients do not need the downstream driver, its runtime dependencies, or its
 credentials. Operators can manage those once on the Grainlift service and
 apply authentication, target policy, quotas, and telemetry at the boundary.
 
+## Why Grainlift
+
+Grainlift turns ADBC drivers into centrally operated network services without
+making applications stop being ADBC applications. This is useful when teams
+want the performance and portability of Arrow-native database access but do
+not want to install, configure, secure, and upgrade every native driver in
+every application environment.
+
+- **One client driver:** applications use the same ADBC interface and
+  Grainlift driver for every authorized downstream database.
+- **Centralized operations:** install native drivers and their runtime
+  dependencies once on the service instead of on every developer machine,
+  container, function, or language runtime.
+- **Credential control:** keep database credentials on the service, or permit
+  caller-supplied destinations and credentials only for explicitly configured
+  targets.
+- **A consistent policy boundary:** enforce authentication, authorization,
+  quotas, deadlines, and connection-option policy independently of each
+  downstream driver.
+- **Uniform observability:** trace ADBC operations, latency, errors, and Arrow
+  row and batch counts across otherwise unrelated database drivers.
+- **Native Arrow data movement:** preserve ADBC semantics and pull-based Arrow
+  record-batch streaming rather than translating queries through a new SQL or
+  row-oriented API.
+
+The tradeoff is an additional stateful service in the query path. Live
+connections, transactions, statements, and result cursors belong to one
+Grainlift worker, so deployments need direct routing or session affinity and
+must treat the service as critical infrastructure. Grainlift is most valuable
+when centralized driver management, credentials, policy, or cross-platform
+access outweigh that operational cost.
+
 > [!IMPORTANT]
 > Grainlift is pre-release. Build the client driver and server from source;
 > Foundry and Cargo packages are not published yet.

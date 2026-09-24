@@ -16,12 +16,12 @@
 -->
 
 <p align="center">
-  <a href="https://query.farm">
-    <img src="https://query.farm/media-kit/logo/wordmark-adaptive.svg" alt="Query.Farm" width="280">
-  </a>
+  <img src=".github/assets/grainlift-logo.svg" alt="Grainlift — networked ADBC" width="620">
 </p>
 
-<h1 align="center">Grainlift</h1>
+<p align="center">
+  <strong>One ADBC driver on the client. Any authorized ADBC driver on the server.</strong>
+</p>
 
 <p align="center">
   <a href="https://github.com/Query-farm/grainlift/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/grainlift/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
@@ -30,67 +30,83 @@
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0 license"></a>
 </p>
 
-Grainlift is the network bridge for
-[ADBC](https://arrow.apache.org/adbc/current/). It makes server-installed ADBC
-drivers available to ordinary ADBC applications. Applications load the
-Grainlift driver and continue to use the standard ADBC API; the
-service owns the downstream database connection, statements, transactions,
-and [Apache Arrow](https://arrow.apache.org/) result streams. The wire protocol
-runs on [VGI-RPC](https://vgi-rpc.query.farm/).
-
-## Architecture
-
 <p align="center">
-  <img src=".github/assets/architecture.svg" alt="ADBC applications use the client-side Grainlift driver to reach the stateful Grainlift service over VGI-RPC; the service authenticates callers and connects through server-installed ADBC drivers to downstream databases.">
+  An open source <a href="https://query.farm">Query Farm</a> project.
 </p>
 
-The client remains an ordinary ADBC application. Grainlift owns every
-stateful downstream object and selects a server-installed driver from the
-authorized target configuration.
+Grainlift makes an [ADBC](https://arrow.apache.org/adbc/current/) driver
+available over a network without changing the application-facing API. An
+application loads the Grainlift ADBC driver, selects an authorized target, and
+uses ordinary ADBC database, connection, statement, transaction, and Arrow
+stream operations. The Grainlift service loads and owns the real downstream
+driver.
 
-The project is pre-release. Build the client driver and server from source;
-published binary packages are not available yet.
+This separates application deployment from native database-driver deployment.
+Clients do not need the downstream driver, its runtime dependencies, or its
+credentials. Operators can manage those once on the Grainlift service and
+apply authentication, target policy, quotas, and telemetry at the boundary.
 
-## Features
+> [!IMPORTANT]
+> Grainlift is pre-release. Build the client driver and server from source;
+> Foundry and Cargo packages are not published yet.
 
-- Standard ADBC 1.1 client interface and C entrypoint
+## How it works
+
+<p align="center">
+  <img src=".github/assets/architecture.svg" alt="An ADBC application loads the Grainlift client driver, connects over VGI-RPC, and reaches a stateful Grainlift service that owns server-installed ADBC drivers and downstream database connections.">
+</p>
+
+| Component | Runs with | Responsibility |
+| --- | --- | --- |
+| `adbc-driver-grainlift` | The application | Presents the standard ADBC 1.1 API and translates calls to VGI-RPC |
+| `grainlift-server` | The service operator | Authenticates callers, enforces target policy, and owns downstream ADBC state |
+| `grainlift-protocol` | Both | Defines the typed Arrow record-batch wire contract |
+| Downstream ADBC driver | The Grainlift service | Connects to SQLite, DuckDB, PostgreSQL, or another configured database |
+
+Results remain pull-based Arrow streams. Grainlift asks the server-side cursor
+for the next record batch as the client consumes it; it does not encode an
+Arrow IPC stream inside a Binary value or turn a database result into an
+unbounded push stream. The wire layer is
+[VGI-RPC](https://vgi-rpc.query.farm/), with HTTP(S), persistent TCP, mutual-TLS
+TCP, and authenticated [Iroh](https://www.iroh.computer/) QUIC transports.
+
+## What Grainlift provides
+
+- A standard ADBC 1.1 shared library with the C entrypoint
   `AdbcDriverGrainliftInit`.
-- Server-side loading of [SQLite](https://www.sqlite.org/),
-  [DuckDB](https://duckdb.org/), [PostgreSQL](https://www.postgresql.org/), and
-  other ADBC drivers.
 - SQL and [Substrait](https://substrait.io/) statements, prepared statements,
   parameter binding, transactions, metadata, statistics, partitioned results,
-  and cancellation.
-- Pull-based native Arrow record-batch streaming without nesting Arrow IPC
-  inside Arrow values.
-- HTTP(S), persistent TCP, mutual-TLS TCP, and authenticated QUIC connectivity
-  through [Iroh](https://www.iroh.computer/).
+  statement options, and cancellation.
+- Native Arrow record-batch streaming, including bounded multi-turn parameter
+  uploads and continuation-based HTTP result streams.
+- Server-managed credentials or explicitly allowed caller-provided connection
+  options.
 - Static bearer-token or JWT/JWKS authentication for HTTP,
-  [SPIFFE](https://spiffe.io/) identities for mTLS, and endpoint-key identities
-  for Iroh.
-- Per-principal target authorization, resource quotas, deadlines, session
-  expiry, graceful shutdown, structured ADBC errors, and
+  [SPIFFE](https://spiffe.io/) identities for mTLS, and cryptographic endpoint
+  identities for Iroh.
+- Per-principal authorization, resource quotas, deadlines, session expiry,
+  graceful shutdown, structured ADBC errors, health probes, and
   [OpenTelemetry](https://opentelemetry.io/) traces.
 
-Capabilities still depend on the selected downstream driver. Unsupported
-operations are returned as ADBC `NOT_IMPLEMENTED` errors.
+Capabilities ultimately depend on the selected downstream driver. Grainlift
+preserves downstream ADBC errors, including `NOT_IMPLEMENTED`, rather than
+pretending an unsupported operation succeeded.
 
 ## Quick start
 
-The example below runs Grainlift against SQLite on the same machine.
+This example serves a local SQLite driver and queries it from Python through
+the exported Grainlift C driver.
 
-### 1. Install prerequisites
+### 1. Install the downstream driver
 
 Install [Rust 1.97 or newer](https://www.rust-lang.org/tools/install) and
-[`dbc`](https://docs.columnar.tech/dbc/), then install the downstream SQLite
-driver:
+[`dbc`](https://docs.columnar.tech/dbc/), then install SQLite for the service:
 
 ```console
 dbc install sqlite --level user
 ```
 
-Only the Grainlift server needs the downstream driver. Client machines need
-the Grainlift shared library instead.
+Only the service host needs this driver. A remote client needs only Grainlift.
 
 ### 2. Build Grainlift
 
@@ -100,60 +116,50 @@ cd grainlift
 cargo build --release --workspace
 ```
 
-The build produces:
+The relevant build outputs are:
 
 - `target/release/grainlift-server`
 - `target/release/libadbc_driver_grainlift.so` on Linux
 - `target/release/libadbc_driver_grainlift.dylib` on macOS
+- `target/release/adbc_driver_grainlift.dll` on Windows
 
-Foundry packaging builds the client driver for Linux amd64/arm64, macOS arm64,
-and Windows amd64. End-to-end Grainlift service validation currently runs on
-Linux.
+### 3. Start the service
 
-### 3. Start the server
-
-The included development configuration defines a SQLite target, listens on
-loopback, and maps the bearer token `development-token` to the principal
-`developer@example.com`.
+The example configuration defines an in-memory SQLite target, binds to
+loopback, and maps `development-token` to `developer@example.com`.
 
 ```console
 cp grainlift.example.toml grainlift.toml
 ./target/release/grainlift-server --config grainlift.toml
 ```
 
-The configuration can also be selected with `GRAINLIFT_CONFIG`. Use
-`GRAINLIFT_SERVER_ID` to assign a stable server identifier for telemetry.
-
-Check readiness from another terminal:
+`GRAINLIFT_CONFIG` can select the configuration file, and
+`GRAINLIFT_SERVER_ID` assigns a stable server identifier for telemetry. Check
+readiness from another terminal:
 
 ```console
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
-### 4. Connect from Python
-
-Install the standard
-[Python ADBC driver manager](https://arrow.apache.org/adbc/current/python/api/adbc_driver_manager.html)
-and [PyArrow](https://arrow.apache.org/docs/python/):
+### 4. Query it from Python
 
 ```console
 python3 -m pip install adbc-driver-manager pyarrow
+export GRAINLIFT_DRIVER="$PWD/target/release/libadbc_driver_grainlift.dylib"
 ```
 
-Then load Grainlift just like any other ADBC driver:
+Use the `.so` path on Linux or the `.dll` path on Windows.
 
 ```python
-from pathlib import Path
+import os
 
 import adbc_driver_manager.dbapi as adbc
 
-grainlift_driver = Path("target/release/libadbc_driver_grainlift.dylib").resolve()
-
 with adbc.connect(
-    driver=grainlift_driver,
+    driver=os.environ["GRAINLIFT_DRIVER"],
     entrypoint="AdbcDriverGrainliftInit",
     db_kwargs={
-        "grainlift.uri": "http://127.0.0.1:8080",
+        "grainlift.uri": "grainlift+http://127.0.0.1:8080",
         "grainlift.target": "sqlite",
         "grainlift.auth.bearer_token": "development-token",
     },
@@ -161,42 +167,20 @@ with adbc.connect(
 ) as connection:
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1 + ? AS answer", [41])
-        table = cursor.fetch_arrow_table()
-        print(table)
+        print(cursor.fetch_arrow_table())
 ```
 
-Use `libadbc_driver_grainlift.so` on Linux. The repository also includes a
-complete [Python example](examples/python_client.py), which can be run with:
+See [examples/python_client.py](examples/python_client.py) for a complete
+environment-driven example.
 
-```console
-export GRAINLIFT_DRIVER="$PWD/target/release/libadbc_driver_grainlift.dylib"
-export GRAINLIFT_ENDPOINT="http://127.0.0.1:8080"
-export GRAINLIFT_TARGET="sqlite"
-export GRAINLIFT_TOKEN="development-token"
-python3 examples/python_client.py
-```
+## Targets, destinations, and credentials
 
-## Server configuration
-
-The server reads a TOML configuration file. See
-[`grainlift.example.toml`](grainlift.example.toml) for all resource limits
-and transport sections.
-
-Iroh clients pool a physical QUIC connection and allocate one VGI control
-stream per live ADBC session, plus a temporary stream while a result or bind
-exchange is active. The Iroh `max_active_streams` and
-`max_active_streams_per_connection` settings therefore need to be sized
-alongside the server session quotas. Their defaults are 1,024 globally and 64
-per connection, which accommodate the default 32 sessions per principal even
-when every session is transferring Arrow data.
-
-Each target names an ADBC driver known to the server's ADBC driver manager and
-may inject database or connection options. Server-configured options are
-immutable: a caller receives `INVALID_ARGUMENT` if it tries to supply or later
-change a server-controlled option such as a database URI or credential.
+A target is an operator-defined route to a server-installed ADBC driver. The
+server can inject the database URI and credentials so callers never receive
+them:
 
 ```toml
-[targets.postgresql]
+[targets.analytics]
 driver = "postgresql"
 entrypoint = "AdbcDriverPostgresqlInit"
 allow_client_database_options = false
@@ -209,26 +193,18 @@ allowed_client_connection_options = [
   "adbc.connection.transaction.isolation_level",
 ]
 
-[[targets.postgresql.database_options]]
+[[targets.analytics.database_options]]
 key = "uri"
 type = "string"
-value = "postgresql://proxy_user:secret@database.internal:5432/app"
+value = "postgresql://service_user:secret@database.internal:5432/app"
 ```
 
-Supported option value types are `string`, `bytes` (base64 encoded), `int`,
-and `double`. Do not commit credentials to source control; supply the runtime
-configuration through your deployment's secret-management mechanism.
+Server-configured options are immutable. Grainlift rejects attempts to supply
+or later replace those keys instead of silently ignoring the caller or
+overriding operator policy.
 
-Use `allowed_client_database_options` and `allowed_client_connection_options`
-to expose only specific downstream options. The broader
-`allow_client_database_options` and `allow_client_connection_options` switches
-allow every non-server-controlled option and are intended for trusted targets.
-Disallowed options are rejected rather than silently ignored. Proxy transport
-options are never forwarded.
-
-The explicit `grainlift.uri` option identifies the Grainlift service. When it is present,
-the standard ADBC `uri` database option is forwarded to the downstream driver,
-which supports caller-selected destinations when target policy allows it:
+A trusted target can instead allow callers to choose their destination and
+credentials:
 
 ```toml
 [targets.postgresql-byoc]
@@ -244,10 +220,10 @@ allowed_client_connection_options = [
 
 ```python
 with adbc.connect(
-    driver=grainlift_driver,
+    driver=os.environ["GRAINLIFT_DRIVER"],
     entrypoint="AdbcDriverGrainliftInit",
     db_kwargs={
-        "grainlift.uri": "grainlift+iroh://<endpoint-id>",
+        "grainlift.uri": "grainlift+iroh://<grainlift-endpoint-id>",
         "grainlift.target": "postgresql-byoc",
         "uri": "postgresql://database.example/app",
         "username": "alice",
@@ -261,56 +237,24 @@ with adbc.connect(
     ...
 ```
 
-When `grainlift.uri` is absent, the standard ADBC `uri` option identifies the
-Grainlift endpoint. This compact form cannot also provide a downstream URI.
+`grainlift.uri` always identifies the Grainlift service. When it is present,
+the standard ADBC `uri` option is available to the downstream driver. If
+`grainlift.uri` is omitted, `uri` identifies Grainlift instead and cannot also
+carry a downstream destination.
 
-`db_kwargs` and `conn_kwargs` set creation-time database and connection
-options. After connection creation, Python applications can use
-`connection.adbc_connection.set_options(...)` and
-`cursor.adbc_statement.set_options(...)` for runtime or statement options.
-Grainlift preserves arbitrary option names and all current ADBC value types:
-string, bytes, signed 64-bit integer, and double. Boolean ADBC options use the
-standard `"true"` and `"false"` string values. The selected downstream driver
-still determines whether a particular option and mutation phase are supported.
-Connection and statement getters query the downstream driver. Database getters
-reflect the caller-side Grainlift database object; server-injected database values
-are deliberately not returned to clients, which prevents credential disclosure.
-
-### Authentication and authorization
-
-For a local or controlled HTTP deployment, static tokens map bearer tokens to
-principals:
-
-```toml
-[auth.static_bearer_tokens]
-development-token = "developer@example.com"
-
-[auth.target_permissions]
-"developer@example.com" = ["sqlite", "postgresql"]
-```
-
-Production HTTP deployments can replace static tokens with a JWT issuer:
-
-```toml
-[auth.jwt]
-issuer = "https://identity.example.com/"
-audience = "grainlift"
-jwks_url = "https://identity.example.com/.well-known/jwks.json"
-principal_claim = "sub"
-```
-
-Static-token and JWT modes are mutually exclusive. Once
-`auth.target_permissions` contains an entry, unlisted principals are denied
-all targets. See [Security and resource controls](docs/security.md) before
-deploying the service.
+Database and connection creation preserve arbitrary option names and every
+current ADBC option value type: string, bytes, signed 64-bit integer, and
+double. Boolean options use the standard `"true"` and `"false"` strings.
+Connection and statement options can also be set after creation when the
+target policy and downstream driver permit it.
 
 ## Client options
 
-Pass these as ADBC database options when opening the Grainlift driver:
+Pass Grainlift options as ADBC database options:
 
 | Option | Purpose | Default |
 | --- | --- | --- |
-| `grainlift.uri` | Grainlift endpoint; accepts product or native transport URLs | required (`uri` is also accepted) |
+| `grainlift.uri` | Grainlift endpoint using a product or native transport URL | required (`uri` is also accepted) |
 | `grainlift.target` | Server-configured target name | required |
 | `grainlift.auth.bearer_token` | HTTP(S) bearer token | none |
 | `grainlift.request_timeout_ms` | Timeout for each RPC | `30000` |
@@ -325,61 +269,68 @@ Pass these as ADBC database options when opening the Grainlift driver:
 
 ## Transports
 
-`grainlift://` selects HTTPS by default. Prefix an explicit transport with the
-product name when a self-describing URL is useful; native VGI-RPC transport
-URLs are accepted as well.
+`grainlift://` selects HTTPS. Explicit product URLs make the chosen transport
+visible while native VGI-RPC URLs remain accepted.
 
-| Endpoint | Native equivalent | Authentication | Intended use |
+| Grainlift URL | Native equivalent | Identity | Typical use |
 | --- | --- | --- | --- |
-| `grainlift://host` / `grainlift+https://host` | `https://host` | Static bearer token or JWT | Secure HTTP ingress, reverse proxies, and service meshes |
-| `grainlift+http://host` | `http://host` | Static bearer token or JWT | Local HTTP or TLS-terminating ingress |
-| `grainlift+tcp://host:port` | `tcp://host:port` | None | Loopback-only development and trusted local routing |
-| `grainlift+tls+tcp://host:port` | `tls+tcp://host:port` | Mutual TLS with a verified SPIFFE identity | Direct production TCP |
-| `grainlift+iroh://<endpoint-id>` | `iroh://<endpoint-id>` | Cryptographic [Iroh](https://www.iroh.computer/) endpoint identity | Authenticated QUIC with direct paths and relay fallback |
+| `grainlift://host` or `grainlift+https://host` | `https://host` | Bearer token or JWT | Secure HTTP ingress, service meshes, and reverse proxies |
+| `grainlift+http://host` | `http://host` | Bearer token or JWT | Local HTTP or an internal listener behind TLS termination |
+| `grainlift+tcp://host:port` | `tcp://host:port` | None | Loopback development and trusted local routing only |
+| `grainlift+tls+tcp://host:port` | `tls+tcp://host:port` | Verified SPIFFE mTLS identity | Direct production TCP |
+| `grainlift+iroh://<endpoint-id>` | `iroh://<endpoint-id>` | Iroh endpoint key | Authenticated QUIC with direct paths and relay fallback |
 
-The server's HTTP listener is plaintext. Terminate TLS in a reverse proxy,
-sidecar, or service mesh and keep the server listener on loopback. Setting
-`server.allow_insecure_remote = true` acknowledges a plaintext remote bind; it
-does not add TLS.
+The built-in HTTP listener is plaintext. Terminate HTTPS in a reverse proxy,
+sidecar, or service mesh and keep the Grainlift listener on loopback or a
+private network. `server.allow_insecure_remote = true` only acknowledges a
+plaintext remote bind; it does not enable TLS.
 
 Plain TCP cannot be used when authentication is required. Production TCP uses
-the `[tcp.tls]` server configuration and the four `grainlift.tls.*` client
-options. [Iroh](https://www.iroh.computer/) provides authenticated QUIC
-connections with direct paths and relay fallback. Grainlift servers map allowed
-client endpoint IDs to principals in `iroh.principals`; persist the server
-secret-key file so its endpoint ID stays stable.
+the `[tcp.tls]` server configuration and the `grainlift.tls.*` client options.
+For Iroh, persist the server secret-key file so the service endpoint ID remains
+stable, and map allowed client endpoint IDs to principals in
+`iroh.principals`.
 
-## Deployment model
+See [grainlift.example.toml](grainlift.example.toml) for the complete server,
+TCP, Iroh, authentication, target, and resource-limit configuration.
 
-ADBC connections are stateful. A server process owns each connection,
-transaction, statement, upload, and result cursor for its lifetime. HTTP
-requests belonging to a session must therefore reach the same server process.
-Use connection/session affinity at ingress, or route clients directly over
-mTLS TCP or Iroh.
+## Stateful sessions and deployment
 
-A worker restart invalidates its live sessions. Do not automatically replay
-commits, updates, DDL, or other non-idempotent operations after a connection
-loss. Native drivers also share the server process; isolate drivers or tenants
-into separate workers when crash containment or hard execution deadlines are
-required. See the [process-isolation profile](docs/process-isolation.md).
+ADBC is stateful. One Grainlift server process owns each downstream database,
+connection, transaction, statement, upload, and result cursor for its
+lifetime. HTTP requests carry a session handle, but all requests for that
+session must still reach the process that owns it. Deploy HTTP replicas with
+session affinity, or route clients directly over mTLS TCP or Iroh.
 
-## Observability and health
+A worker restart invalidates its sessions. Grainlift does not automatically
+replay commits, updates, DDL, or other non-idempotent operations after a
+connection loss. Native drivers also share the service process; isolate
+drivers or tenants into separate workers when crash containment or hard
+execution deadlines are required. See the
+[process-isolation profile](docs/process-isolation.md).
 
-Every RPC action emits a structured tracing span with the method, authenticated
-principal, status, duration, and Arrow batch/row counts. SQL text, credentials,
-tokens, connection strings, Arrow values, and raw downstream error messages
-are not recorded.
+## Security and observability
+
+For HTTP, development deployments can map static bearer tokens to principals;
+production deployments can use a JWT issuer and JWKS endpoint. Target
+permissions bind authenticated principals to an explicit set of routes. mTLS
+and Iroh derive the principal from the transport identity.
+
+Every RPC action emits a structured span with its method, authenticated
+principal, status, duration, and Arrow batch/row counts. Grainlift does not log
+SQL text, credentials, bearer tokens, connection strings, Arrow values, TLS
+private keys, or raw downstream error messages.
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` or
-`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to enable OTLP/HTTP trace export. Standard
-OpenTelemetry headers and timeout environment variables are honored. Set
-`OTEL_SDK_DISABLED=true` to disable export explicitly.
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to export OTLP/HTTP traces. The HTTP
+listener also exposes unauthenticated health endpoints:
 
-The HTTP listener exposes unauthenticated liveness and readiness probes:
+- `GET /healthz` for liveness
+- `GET /readyz` for readiness
+- `GET /health` for VGI-RPC health
 
-- `GET /healthz`
-- `GET /readyz`
-- `GET /health` (VGI health endpoint)
+Read [Security and resource controls](docs/security.md) before deploying
+Grainlift outside a development environment.
 
 ## Development and validation
 
@@ -392,8 +343,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The external harness loads the compiled C ABI through the Python ADBC driver
-manager. CI tests SQLite, DuckDB, PostgreSQL, MySQL, Flight SQL, DataFusion,
-Trino, and Microsoft SQL Server drivers:
+manager. CI exercises SQLite, DuckDB, PostgreSQL, MySQL, Flight SQL,
+DataFusion, Trino, and Microsoft SQL Server, plus HTTP, TCP, mTLS, and Iroh
+transport paths.
 
 ```console
 dbc install "sqlite=1.12.0" --level user
@@ -404,18 +356,19 @@ GRAINLIFT_TRANSPORT=iroh ./validation/run_external.sh load sqlite \
   --workers 32 --iterations 50
 ```
 
-See the [validation guide](validation/README.md) for prerequisites, transport
-selection, payload-boundary testing, fault injection, load testing, and the
-[ADBC Driver Foundry](https://adbc-drivers.org/) suite.
+See the [validation guide](validation/README.md) for downstream prerequisites,
+payload-boundary tests, fault injection, load testing, and the
+[ADBC Driver Foundry](https://adbc-drivers.org/) suite. Recorded results and
+their environments are in [validation/RESULTS.md](validation/RESULTS.md).
 
 ## Repository layout
 
-- `crates/adbc-driver-grainlift`: client-side ADBC shared library.
-- `crates/grainlift-server`: Grainlift service and downstream driver manager.
-- `crates/grainlift-protocol`: typed ADBC-over-VGI wire contract.
-- `examples`: client examples.
-- `validation`: external conformance, fault, payload, and load tests.
-- `docs`: security and process-isolation guidance.
+- `crates/adbc-driver-grainlift`: client-side ADBC shared library
+- `crates/grainlift-server`: stateful Grainlift service and driver manager
+- `crates/grainlift-protocol`: typed ADBC-over-VGI wire contract
+- `examples`: client examples
+- `validation`: C-ABI, Foundry, fault, payload, and load tests
+- `docs`: operator-facing security and process-isolation guidance
 
 ## License
 

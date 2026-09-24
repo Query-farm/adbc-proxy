@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
   <title id="title">Grainlift architecture</title>
-  <desc id="desc">An ADBC application loads the client-side proxy driver, communicates over VGI-RPC using HTTP, TCP with mutual TLS, or Iroh, and reaches the stateful proxy service. The service authenticates and authorizes the caller, owns ADBC connection state, and uses the server-side driver manager to connect to SQLite, DuckDB, PostgreSQL, or another configured ADBC driver.</desc>
+  <desc id="desc">An ADBC application loads the client-side Grainlift driver, communicates over VGI-RPC using HTTP, TCP with mutual TLS, or Iroh, and reaches the stateful Grainlift service. The service authenticates and authorizes the caller, owns ADBC connection state, and uses the server-side driver manager to connect to SQLite, DuckDB, PostgreSQL, or another configured ADBC driver.</desc>
 
   <style>
     .canvas { fill: #fbfaf7; }

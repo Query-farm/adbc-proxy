@@ -1,0 +1,57 @@
+<!--
+  Copyright (c) 2026 ADBC Drivers Contributors
+  Copyright (c) 2026 Query Farm LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">Grainlift</title>
+  <desc id="desc">Grain-shaped Arrow batches rising through a network lift beside the Grainlift wordmark.</desc>
+
+  <style>
+    .wordmark { fill: #211a12; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 102px; font-weight: 750; letter-spacing: -4px; }
+    .tagline { fill: #7a6a58; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 22px; font-weight: 650; letter-spacing: 5px; }
+    .lift { fill: none; stroke: #7a5230; stroke-width: 13; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: #00a4e4; stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+    .field { fill: none; stroke: #5d8467; stroke-width: 8; stroke-linecap: round; }
+    .grain-a { fill: #f0c877; stroke: #a9762e; stroke-width: 4; }
+    .grain-b { fill: #d9a441; stroke: #7d5714; stroke-width: 4; }
+
+    @media (prefers-color-scheme: dark) {
+      .wordmark { fill: #f4ece0; }
+      .tagline { fill: #c8b9a6; }
+      .lift { stroke: #d6a863; }
+      .field { stroke: #80ad8b; }
+      .grain-a { fill: #f0c877; stroke: #d9a441; }
+      .grain-b { fill: #d9a441; stroke: #f0c877; }
+    }
+  </style>
+
+  <g transform="translate(18 18)">
+    <path class="field" d="M18 180 C50 161 84 161 116 180 C145 197 170 197 194 184"/>
+    <path class="field" d="M22 198 C52 182 82 182 112 198" opacity="0.65"/>
+
+    <path class="lift" d="M46 164 V54 C46 35 61 20 80 20 H143 C162 20 177 35 177 54 V164"/>
+    <path class="lift" d="M30 164 H193"/>
+
+    <path class="flow" d="M112 153 V51"/>
+    <path class="flow" d="M88 75 L112 50 L136 75"/>
+
+    <path class="grain-a" d="M69 143 C54 130 57 112 76 103 C91 116 89 134 69 143 Z"/>
+    <path class="grain-b" d="M151 128 C167 115 164 97 145 88 C130 101 132 119 151 128 Z"/>
+    <path class="grain-a" d="M72 92 C57 79 60 61 79 52 C94 65 92 83 72 92 Z"/>
+  </g>
+
+  <text class="wordmark" x="248" y="137">Grainlift</text>
+  <text class="tagline" x="255" y="184">NETWORKED ADBC</text>
+</svg>

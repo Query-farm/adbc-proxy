@@ -53,7 +53,9 @@ class GrainliftSqliteQuirks(model.DriverQuirks):
         "grainlift.target": model.FromEnv("GRAINLIFT_TARGET"),
     }
     if os.environ.get("GRAINLIFT_TOKEN"):
-        _database_options["grainlift.auth.bearer_token"] = model.FromEnv("GRAINLIFT_TOKEN")
+        _database_options["grainlift.auth.bearer_token"] = model.FromEnv(
+            "GRAINLIFT_TOKEN"
+        )
     if os.environ.get("GRAINLIFT_DOWNSTREAM_URI"):
         _database_options["uri"] = model.FromEnv("GRAINLIFT_DOWNSTREAM_URI")
     if os.environ.get("GRAINLIFT_IROH_DIRECT_ADDRESS"):

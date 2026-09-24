@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! ADBC 1.1 client driver for the ADBC proxy service.
+//! ADBC 1.1 client driver for the Grainlift service.
 
 mod iroh_pool;
 
@@ -31,51 +31,51 @@ use adbc_core::options::{
 use adbc_core::{
     CancelHandle, Connection, Database, Driver, Optionable, PartitionedResult, Statement,
 };
-use adbc_proxy_protocol as protocol;
 use arrow_array::{
     Array, ArrayRef, BinaryArray, Int64Array, RecordBatch, RecordBatchReader, StringArray,
     UInt32Array, UnionArray, new_empty_array, new_null_array,
 };
 use arrow_buffer::ScalarBuffer;
 use arrow_schema::{ArrowError, DataType, Schema, SchemaRef, UnionMode};
+use grainlift_protocol as protocol;
 use rustls::pki_types::pem::PemObject;
 use vgi_rpc_client::{HttpClient, Metadata, RpcClient, RpcError};
 use vgi_rpc_iroh::IrohTarget;
 
-pub const DRIVER_NAME: &str = "adbc_driver_proxy";
-pub const DRIVER_INFO_NAME: &str = "ADBC Proxy Driver";
+pub const DRIVER_NAME: &str = "adbc_driver_grainlift";
+pub const DRIVER_INFO_NAME: &str = "Grainlift ADBC Driver";
 pub const DRIVER_ARROW_VERSION: &str = "v59";
-pub const OPTION_PROXY_URI: &str = "proxy.uri";
-pub const OPTION_TARGET: &str = "proxy.target";
-pub const OPTION_BEARER_TOKEN: &str = "proxy.auth.bearer_token";
-pub const OPTION_REQUEST_TIMEOUT_MS: &str = "proxy.request_timeout_ms";
-pub const OPTION_MAX_RESPONSE_BYTES: &str = "proxy.max_response_bytes";
-pub const OPTION_MAX_BIND_BYTES: &str = "proxy.max_bind_bytes";
-pub const OPTION_TLS_CA: &str = "proxy.tls.ca";
-pub const OPTION_TLS_CERT: &str = "proxy.tls.cert";
-pub const OPTION_TLS_KEY: &str = "proxy.tls.key";
-pub const OPTION_TLS_SERVER_NAME: &str = "proxy.tls.server_name";
-pub const OPTION_IROH_SECRET_KEY: &str = "proxy.iroh.secret_key";
-pub const OPTION_IROH_DIRECT_ADDRESS: &str = "proxy.iroh.direct_address";
+pub const OPTION_GRAINLIFT_URI: &str = "grainlift.uri";
+pub const OPTION_TARGET: &str = "grainlift.target";
+pub const OPTION_BEARER_TOKEN: &str = "grainlift.auth.bearer_token";
+pub const OPTION_REQUEST_TIMEOUT_MS: &str = "grainlift.request_timeout_ms";
+pub const OPTION_MAX_RESPONSE_BYTES: &str = "grainlift.max_response_bytes";
+pub const OPTION_MAX_BIND_BYTES: &str = "grainlift.max_bind_bytes";
+pub const OPTION_TLS_CA: &str = "grainlift.tls.ca";
+pub const OPTION_TLS_CERT: &str = "grainlift.tls.cert";
+pub const OPTION_TLS_KEY: &str = "grainlift.tls.key";
+pub const OPTION_TLS_SERVER_NAME: &str = "grainlift.tls.server_name";
+pub const OPTION_IROH_SECRET_KEY: &str = "grainlift.iroh.secret_key";
+pub const OPTION_IROH_DIRECT_ADDRESS: &str = "grainlift.iroh.direct_address";
 const DEFAULT_REQUEST_TIMEOUT_MS: i64 = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES: i64 = 256 * 1024 * 1024;
 const DEFAULT_MAX_BIND_BYTES: i64 = protocol::MAX_BIND_STREAM_BYTES as i64;
 
 #[derive(Default)]
-pub struct ProxyDriver;
+pub struct GrainliftDriver;
 
-impl Driver for ProxyDriver {
-    type DatabaseType = ProxyDatabase;
+impl Driver for GrainliftDriver {
+    type DatabaseType = GrainliftDatabase;
 
     fn new_database(&mut self) -> Result<Self::DatabaseType> {
-        Ok(ProxyDatabase::default())
+        Ok(GrainliftDatabase::default())
     }
 
     fn new_database_with_opts(
         &mut self,
         opts: impl IntoIterator<Item = (OptionDatabase, OptionValue)>,
     ) -> Result<Self::DatabaseType> {
-        let mut database = ProxyDatabase::default();
+        let mut database = GrainliftDatabase::default();
         for (key, value) in opts {
             database.set_option(key, value)?;
         }
@@ -85,13 +85,13 @@ impl Driver for ProxyDriver {
 }
 
 #[derive(Default)]
-pub struct ProxyDatabase {
+pub struct GrainliftDatabase {
     options: HashMap<String, OptionValue>,
 }
 
-impl ProxyDatabase {
+impl GrainliftDatabase {
     fn validate(&self) -> Result<()> {
-        self.string_option_any(&[OPTION_PROXY_URI, OptionDatabase::Uri.as_ref()])?;
+        self.string_option_any(&[OPTION_GRAINLIFT_URI, OptionDatabase::Uri.as_ref()])?;
         self.string_option(OPTION_TARGET)?;
         Ok(())
     }
@@ -123,7 +123,7 @@ impl ProxyDatabase {
             .transpose()
     }
 
-    fn proxy_positive_int(&self, key: &str, default: i64) -> Result<usize> {
+    fn positive_int_option(&self, key: &str, default: i64) -> Result<usize> {
         let value = match self.options.get(key) {
             None => default,
             Some(OptionValue::Int(value)) => *value,
@@ -146,14 +146,14 @@ impl ProxyDatabase {
     }
 
     fn remote_options(&self) -> Vec<protocol::WireOption> {
-        // `uri` historically doubled as the proxy endpoint.  Once the explicit
-        // proxy URI is present, preserve the standard ADBC `uri` option for the
-        // downstream driver.
-        let legacy_uri_is_proxy = !self.options.contains_key(OPTION_PROXY_URI);
+        // Without `grainlift.uri`, the standard ADBC `uri` identifies the
+        // Grainlift service. With it, forward `uri` to the downstream driver.
+        let standard_uri_is_grainlift = !self.options.contains_key(OPTION_GRAINLIFT_URI);
         self.options
             .iter()
             .filter(|(key, _)| {
-                !is_proxy_database_option(key) && !(legacy_uri_is_proxy && key.as_str() == "uri")
+                !is_grainlift_database_option(key)
+                    && !(standard_uri_is_grainlift && key.as_str() == "uri")
             })
             .map(|(key, value)| protocol::WireOption {
                 key: key.clone(),
@@ -163,7 +163,7 @@ impl ProxyDatabase {
     }
 }
 
-impl Optionable for ProxyDatabase {
+impl Optionable for GrainliftDatabase {
     type Option = OptionDatabase;
 
     fn set_option(&mut self, key: Self::Option, value: OptionValue) -> Result<()> {
@@ -188,8 +188,8 @@ impl Optionable for ProxyDatabase {
     }
 }
 
-impl Database for ProxyDatabase {
-    type ConnectionType = ProxyConnection;
+impl Database for GrainliftDatabase {
+    type ConnectionType = GrainliftConnection;
 
     fn new_connection(&self) -> Result<Self::ConnectionType> {
         self.new_connection_with_opts(std::iter::empty())
@@ -200,7 +200,8 @@ impl Database for ProxyDatabase {
         opts: impl IntoIterator<Item = (OptionConnection, OptionValue)>,
     ) -> Result<Self::ConnectionType> {
         self.validate()?;
-        let endpoint = self.string_option_any(&[OPTION_PROXY_URI, OptionDatabase::Uri.as_ref()])?;
+        let endpoint =
+            self.string_option_any(&[OPTION_GRAINLIFT_URI, OptionDatabase::Uri.as_ref()])?;
         let target = self.string_option(OPTION_TARGET)?;
         let bearer_token = self
             .options
@@ -208,11 +209,11 @@ impl Database for ProxyDatabase {
             .map(|_| self.string_option(OPTION_BEARER_TOKEN))
             .transpose()?;
         let request_timeout_ms =
-            self.proxy_positive_int(OPTION_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)?;
+            self.positive_int_option(OPTION_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)?;
         let max_response_bytes =
-            self.proxy_positive_int(OPTION_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESPONSE_BYTES)?;
+            self.positive_int_option(OPTION_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESPONSE_BYTES)?;
         let max_bind_bytes =
-            self.proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)?;
+            self.positive_int_option(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)?;
         let transport_options = TransportOptions {
             tls_ca: self.optional_string(OPTION_TLS_CA)?,
             tls_cert: self.optional_string(OPTION_TLS_CERT)?,
@@ -239,17 +240,17 @@ impl Database for ProxyDatabase {
             max_bind_bytes,
             transport_options,
         })?;
-        Ok(ProxyConnection {
+        Ok(GrainliftConnection {
             remote: Arc::new(state),
         })
     }
 }
 
-pub struct ProxyConnection {
+pub struct GrainliftConnection {
     remote: Arc<RemoteConnection>,
 }
 
-impl Optionable for ProxyConnection {
+impl Optionable for GrainliftConnection {
     type Option = OptionConnection;
 
     fn set_option(&mut self, key: Self::Option, value: OptionValue) -> Result<()> {
@@ -262,37 +263,37 @@ impl Optionable for ProxyConnection {
     fn get_option_string(&self, key: Self::Option) -> Result<String> {
         match self.remote.get_connection_option(key.as_ref(), "string")? {
             OptionValue::String(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 
     fn get_option_bytes(&self, key: Self::Option) -> Result<Vec<u8>> {
         match self.remote.get_connection_option(key.as_ref(), "bytes")? {
             OptionValue::Bytes(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 
     fn get_option_int(&self, key: Self::Option) -> Result<i64> {
         match self.remote.get_connection_option(key.as_ref(), "int")? {
             OptionValue::Int(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 
     fn get_option_double(&self, key: Self::Option) -> Result<f64> {
         match self.remote.get_connection_option(key.as_ref(), "double")? {
             OptionValue::Double(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 }
 
-impl Connection for ProxyConnection {
-    type StatementType = ProxyStatement;
+impl Connection for GrainliftConnection {
+    type StatementType = GrainliftStatement;
 
     fn get_cancel_handle(&self) -> Box<dyn CancelHandle> {
-        Box::new(ProxyConnectionCancelHandle {
+        Box::new(GrainliftConnectionCancelHandle {
             remote: Arc::downgrade(&self.remote),
         })
     }
@@ -303,7 +304,7 @@ impl Connection for ProxyConnection {
             .remote
             .call(protocol::method::NEW_STATEMENT, &request)?;
         let statement_id = string_column(&response, "statement_id")?.to_string();
-        Ok(ProxyStatement {
+        Ok(GrainliftStatement {
             remote: self.remote.clone(),
             statement_id,
         })
@@ -321,9 +322,9 @@ impl Connection for ProxyConnection {
             serde_json::json!({ "codes": wire_codes }),
         )?;
         let schema = downstream.schema();
-        let proxy_batch = proxy_info_batch(codes.as_ref(), schema.clone())?;
-        Ok(Box::new(ProxyInfoReader {
-            proxy_batch,
+        let grainlift_batch = grainlift_info_batch(codes.as_ref(), schema.clone())?;
+        Ok(Box::new(GrainliftInfoReader {
+            grainlift_batch,
             downstream,
             pending: VecDeque::new(),
             schema,
@@ -416,18 +417,18 @@ impl Connection for ProxyConnection {
     }
 }
 
-struct ProxyInfoReader {
-    proxy_batch: Option<RecordBatch>,
+struct GrainliftInfoReader {
+    grainlift_batch: Option<RecordBatch>,
     downstream: Box<dyn RecordBatchReader + Send + 'static>,
     pending: VecDeque<RecordBatch>,
     schema: SchemaRef,
 }
 
-impl Iterator for ProxyInfoReader {
+impl Iterator for GrainliftInfoReader {
     type Item = std::result::Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(batch) = self.proxy_batch.take() {
+        if let Some(batch) = self.grainlift_batch.take() {
             return Some(Ok(batch));
         }
         if let Some(batch) = self.pending.pop_front() {
@@ -450,7 +451,7 @@ impl Iterator for ProxyInfoReader {
             };
             let mut run_start = None;
             for (index, code) in info_names.values().iter().enumerate() {
-                if is_proxy_driver_info(*code) {
+                if is_grainlift_driver_info(*code) {
                     if let Some(start) = run_start.take() {
                         self.pending.push_back(batch.slice(start, index - start));
                     }
@@ -469,13 +470,13 @@ impl Iterator for ProxyInfoReader {
     }
 }
 
-impl RecordBatchReader for ProxyInfoReader {
+impl RecordBatchReader for GrainliftInfoReader {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 }
 
-fn proxy_info_batch(
+fn grainlift_info_batch(
     codes: Option<&HashSet<InfoCode>>,
     schema: SchemaRef,
 ) -> Result<Option<RecordBatch>> {
@@ -557,18 +558,18 @@ fn proxy_info_batch(
     )?))
 }
 
-fn is_proxy_driver_info(code: u32) -> bool {
+fn is_grainlift_driver_info(code: u32) -> bool {
     code == u32::from(&InfoCode::DriverName)
         || code == u32::from(&InfoCode::DriverVersion)
         || code == u32::from(&InfoCode::DriverArrowVersion)
         || code == u32::from(&InfoCode::DriverAdbcVersion)
 }
 
-struct ProxyConnectionCancelHandle {
+struct GrainliftConnectionCancelHandle {
     remote: std::sync::Weak<RemoteConnection>,
 }
 
-impl CancelHandle for ProxyConnectionCancelHandle {
+impl CancelHandle for GrainliftConnectionCancelHandle {
     fn try_cancel(&self) -> Result<()> {
         let Some(remote) = self.remote.upgrade() else {
             return Ok(());
@@ -577,12 +578,12 @@ impl CancelHandle for ProxyConnectionCancelHandle {
     }
 }
 
-pub struct ProxyStatement {
+pub struct GrainliftStatement {
     remote: Arc<RemoteConnection>,
     statement_id: String,
 }
 
-impl ProxyStatement {
+impl GrainliftStatement {
     fn request(&self) -> Result<RecordBatch> {
         statement_request(&self.remote.session_id, &self.statement_id)
     }
@@ -601,7 +602,7 @@ impl ProxyStatement {
     }
 }
 
-impl Drop for ProxyStatement {
+impl Drop for GrainliftStatement {
     fn drop(&mut self) {
         if let Ok(request) = self.request() {
             let _ = self
@@ -611,7 +612,7 @@ impl Drop for ProxyStatement {
     }
 }
 
-impl Optionable for ProxyStatement {
+impl Optionable for GrainliftStatement {
     type Option = OptionStatement;
 
     fn set_option(&mut self, key: Self::Option, value: OptionValue) -> Result<()> {
@@ -629,33 +630,33 @@ impl Optionable for ProxyStatement {
     fn get_option_string(&self, key: Self::Option) -> Result<String> {
         match self.get_option(key.as_ref(), "string")? {
             OptionValue::String(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 
     fn get_option_bytes(&self, key: Self::Option) -> Result<Vec<u8>> {
         match self.get_option(key.as_ref(), "bytes")? {
             OptionValue::Bytes(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 
     fn get_option_int(&self, key: Self::Option) -> Result<i64> {
         match self.get_option(key.as_ref(), "int")? {
             OptionValue::Int(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 
     fn get_option_double(&self, key: Self::Option) -> Result<f64> {
         match self.get_option(key.as_ref(), "double")? {
             OptionValue::Double(value) => Ok(value),
-            _ => Err(internal("proxy returned the wrong option value type")),
+            _ => Err(internal("Grainlift returned the wrong option value type")),
         }
     }
 }
 
-impl Statement for ProxyStatement {
+impl Statement for GrainliftStatement {
     fn bind(&mut self, batch: RecordBatch) -> Result<()> {
         let schema = batch.schema();
         let mut batches = std::iter::once(Ok(batch));
@@ -752,19 +753,19 @@ impl Statement for ProxyStatement {
     }
 
     fn get_cancel_handle(&self) -> Box<dyn CancelHandle> {
-        Box::new(ProxyCancelHandle {
+        Box::new(GrainliftCancelHandle {
             remote: Arc::downgrade(&self.remote),
             statement_id: self.statement_id.clone(),
         })
     }
 }
 
-struct ProxyCancelHandle {
+struct GrainliftCancelHandle {
     remote: std::sync::Weak<RemoteConnection>,
     statement_id: String,
 }
 
-impl CancelHandle for ProxyCancelHandle {
+impl CancelHandle for GrainliftCancelHandle {
     fn try_cancel(&self) -> Result<()> {
         let Some(remote) = self.remote.upgrade() else {
             return Ok(());
@@ -830,7 +831,7 @@ impl ByteConnector {
         } else if self.endpoint.starts_with("iroh://") {
             return self.connect_iroh();
         } else {
-            return Err(not_implemented("unsupported byte-stream proxy URI"));
+            return Err(not_implemented("unsupported Grainlift byte-stream URI"));
         };
         Ok((configure_rpc_client(client), None))
     }
@@ -883,6 +884,7 @@ impl RemoteTransport {
         max_response_bytes: usize,
         options: TransportOptions,
     ) -> Result<Self> {
+        let endpoint = normalize_endpoint(endpoint);
         if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
             let http = reqwest::blocking::Client::builder()
                 .build()
@@ -906,7 +908,7 @@ impl RemoteTransport {
             && !endpoint.starts_with("iroh://")
         {
             return Err(not_implemented(
-                "proxy URI scheme; supported schemes are http, https, tcp, tls+tcp, and iroh",
+                "Grainlift URI scheme; supported schemes are grainlift, grainlift+http, grainlift+https, grainlift+tcp, grainlift+tls+tcp, grainlift+iroh, http, https, tcp, tls+tcp, and iroh",
             ));
         }
         let connector = ByteConnector {
@@ -959,6 +961,24 @@ impl RemoteTransport {
                 .map_err(rpc_error),
         }
     }
+}
+
+fn normalize_endpoint(endpoint: String) -> String {
+    const ALIASES: &[(&str, &str)] = &[
+        ("grainlift://", "https://"),
+        ("grainlift+http://", "http://"),
+        ("grainlift+https://", "https://"),
+        ("grainlift+tcp://", "tcp://"),
+        ("grainlift+tls+tcp://", "tls+tcp://"),
+        ("grainlift+iroh://", "iroh://"),
+    ];
+
+    for (alias, transport) in ALIASES {
+        if let Some(address) = endpoint.strip_prefix(alias) {
+            return format!("{transport}{address}");
+        }
+    }
+    endpoint
 }
 
 struct RemoteConnection {
@@ -1188,7 +1208,7 @@ impl ByteReader {
         let (tx, rx) = mpsc::sync_channel(1);
         let (ready_tx, ready_rx) = mpsc::channel();
         thread::Builder::new()
-            .name("adbc-proxy-result-stream".to_string())
+            .name("grainlift-result-stream".to_string())
             .spawn(move || {
                 let (mut client, lease) = match connector.connect() {
                     Ok(value) => value,
@@ -1603,7 +1623,7 @@ fn configure_rpc_client(client: RpcClient) -> RpcClient {
 }
 
 fn host_and_port(endpoint: &str, expected_scheme: &str) -> Result<(String, u16)> {
-    let parsed = url::Url::parse(endpoint).map_err(|_| invalid("invalid proxy URI"))?;
+    let parsed = url::Url::parse(endpoint).map_err(|_| invalid("invalid Grainlift URI"))?;
     if parsed.scheme() != expected_scheme
         || !parsed.username().is_empty()
         || parsed.password().is_some()
@@ -1612,16 +1632,16 @@ fn host_and_port(endpoint: &str, expected_scheme: &str) -> Result<(String, u16)>
         || parsed.fragment().is_some()
     {
         return Err(invalid(format!(
-            "{expected_scheme} proxy URI must contain only a host and explicit port"
+            "{expected_scheme} Grainlift URI must contain only a host and explicit port"
         )));
     }
     let host = parsed
         .host_str()
-        .ok_or_else(|| invalid("proxy URI host is required"))?
+        .ok_or_else(|| invalid("Grainlift URI host is required"))?
         .to_string();
     let port = parsed
         .port()
-        .ok_or_else(|| invalid("proxy URI port is required"))?;
+        .ok_or_else(|| invalid("Grainlift URI port is required"))?;
     Ok((host, port))
 }
 
@@ -1702,10 +1722,10 @@ fn rpc_error(error: RpcError) -> Error {
     Error::with_message_and_status(error.to_string(), Status::IO)
 }
 
-fn is_proxy_database_option(key: &str) -> bool {
+fn is_grainlift_database_option(key: &str) -> bool {
     matches!(
         key,
-        OPTION_PROXY_URI
+        OPTION_GRAINLIFT_URI
             | OPTION_TARGET
             | OPTION_BEARER_TOKEN
             | OPTION_REQUEST_TIMEOUT_MS
@@ -1766,31 +1786,31 @@ fn not_found(message: impl Into<String>) -> Error {
 
 fn not_implemented(feature: &str) -> Error {
     Error::with_message_and_status(
-        format!("{feature} is not implemented by adbc_driver_proxy yet"),
+        format!("{feature} is not implemented by adbc_driver_grainlift yet"),
         Status::NotImplemented,
     )
 }
 
-adbc_ffi::export_driver!(AdbcDriverProxyInit, ProxyDriver);
+adbc_ffi::export_driver!(AdbcDriverGrainliftInit, GrainliftDriver);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn proxy_options_are_not_forwarded() {
-        assert!(is_proxy_database_option(OPTION_PROXY_URI));
-        assert!(is_proxy_database_option(OPTION_TARGET));
-        assert!(is_proxy_database_option(OPTION_MAX_BIND_BYTES));
-        assert!(!is_proxy_database_option("username"));
+    fn grainlift_options_are_not_forwarded() {
+        assert!(is_grainlift_database_option(OPTION_GRAINLIFT_URI));
+        assert!(is_grainlift_database_option(OPTION_TARGET));
+        assert!(is_grainlift_database_option(OPTION_MAX_BIND_BYTES));
+        assert!(!is_grainlift_database_option("username"));
     }
 
     #[test]
-    fn explicit_proxy_uri_preserves_downstream_uri() {
-        let mut database = ProxyDatabase::default();
+    fn explicit_grainlift_uri_preserves_downstream_uri() {
+        let mut database = GrainliftDatabase::default();
         database
             .set_option(
-                OptionDatabase::Other(OPTION_PROXY_URI.into()),
+                OptionDatabase::Other(OPTION_GRAINLIFT_URI.into()),
                 "http://localhost:8080".into(),
             )
             .unwrap();
@@ -1811,8 +1831,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_uri_endpoint_is_not_forwarded() {
-        let mut database = ProxyDatabase::default();
+    fn standard_uri_endpoint_is_not_forwarded() {
+        let mut database = GrainliftDatabase::default();
         database
             .set_option(OptionDatabase::Uri, "http://localhost:8080".into())
             .unwrap();
@@ -1822,7 +1842,7 @@ mod tests {
 
     #[test]
     fn database_requires_endpoint_and_target() {
-        let mut database = ProxyDatabase::default();
+        let mut database = GrainliftDatabase::default();
         assert_eq!(
             database.validate().unwrap_err().status,
             Status::InvalidArguments
@@ -1837,11 +1857,29 @@ mod tests {
     }
 
     #[test]
+    fn grainlift_uri_aliases_select_the_expected_transport() {
+        for (uri, expected) in [
+            ("grainlift://example.com", "https://example.com"),
+            ("grainlift+http://localhost:8080", "http://localhost:8080"),
+            ("grainlift+https://example.com", "https://example.com"),
+            ("grainlift+tcp://localhost:9400", "tcp://localhost:9400"),
+            (
+                "grainlift+tls+tcp://db.example.com:9400",
+                "tls+tcp://db.example.com:9400",
+            ),
+            ("grainlift+iroh://endpoint-id", "iroh://endpoint-id"),
+            ("iroh://endpoint-id", "iroh://endpoint-id"),
+        ] {
+            assert_eq!(normalize_endpoint(uri.into()), expected);
+        }
+    }
+
+    #[test]
     fn max_bind_bytes_is_positive_and_supports_the_full_adbc_integer_range() {
-        let mut database = ProxyDatabase::default();
+        let mut database = GrainliftDatabase::default();
         assert_eq!(
             database
-                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .positive_int_option(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
                 .unwrap(),
             protocol::MAX_BIND_STREAM_BYTES
         );
@@ -1851,7 +1889,7 @@ mod tests {
         );
         assert_eq!(
             database
-                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .positive_int_option(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
                 .unwrap(),
             protocol::MAX_CONFIGURABLE_BIND_BYTES
         );
@@ -1860,14 +1898,14 @@ mod tests {
             .insert(OPTION_MAX_BIND_BYTES.into(), OptionValue::Int(0));
         assert!(
             database
-                .proxy_positive_int(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
+                .positive_int_option(OPTION_MAX_BIND_BYTES, DEFAULT_MAX_BIND_BYTES)
                 .is_err()
         );
     }
 
     #[test]
-    fn proxy_get_info_identifies_the_client_driver() {
-        let batch = proxy_info_batch(None, adbc_core::schemas::GET_INFO_SCHEMA.clone())
+    fn grainlift_get_info_identifies_the_client_driver() {
+        let batch = grainlift_info_batch(None, adbc_core::schemas::GET_INFO_SCHEMA.clone())
             .unwrap()
             .unwrap();
         assert_eq!(batch.schema(), adbc_core::schemas::GET_INFO_SCHEMA.clone());
@@ -1901,7 +1939,7 @@ mod tests {
     }
 
     #[test]
-    fn proxy_get_info_matches_a_sparse_downstream_union() {
+    fn grainlift_get_info_matches_a_sparse_downstream_union() {
         let canonical = adbc_core::schemas::GET_INFO_SCHEMA.clone();
         let DataType::Union(fields, _) = canonical.field(1).data_type() else {
             panic!("GetInfo value must be a union");
@@ -1915,7 +1953,7 @@ mod tests {
             ),
         ]));
 
-        let batch = proxy_info_batch(None, schema.clone()).unwrap().unwrap();
+        let batch = grainlift_info_batch(None, schema.clone()).unwrap().unwrap();
         assert_eq!(batch.schema(), schema);
         let values = batch
             .column(1)

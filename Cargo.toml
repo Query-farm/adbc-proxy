@@ -16,9 +16,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/adbc-proxy-protocol",
-    "crates/adbc-proxy-server",
-    "crates/adbc-driver-proxy",
+    "crates/grainlift-protocol",
+    "crates/grainlift-server",
+    "crates/adbc-driver-grainlift",
 ]
 
 [workspace.package]
@@ -28,7 +28,7 @@ rust-version = "1.97"
 authors = ["Query Farm LLC"]
 license = "Apache-2.0"
 homepage = "https://query.farm"
-repository = "https://github.com/Query-farm/adbc-proxy"
+repository = "https://github.com/Query-farm/grainlift"
 
 [workspace.dependencies]
 adbc_core = { version = "0.25.0", git = "https://github.com/apache/arrow-adbc.git", rev = "616acfdfcea9b66956fdb3d11437b6cf24edbc39" }

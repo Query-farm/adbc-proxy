@@ -151,7 +151,7 @@ impl Backend for DriverManagerBackend {
 
 fn merge_options(
     client: Vec<(String, OptionValue)>,
-    configured: &[adbc_proxy_protocol::WireOption],
+    configured: &[grainlift_protocol::WireOption],
     policy: &ClientOptionPolicy,
     kind: &str,
 ) -> AdbcResult<Vec<(String, OptionValue)>> {
@@ -372,7 +372,7 @@ impl BackendStatement for ManagerStatement {
 mod tests {
     use adbc_core::error::Status;
     use adbc_core::options::OptionValue;
-    use adbc_proxy_protocol::{WireOption, WireOptionValue};
+    use grainlift_protocol::{WireOption, WireOptionValue};
 
     use super::merge_options;
     use crate::config::TargetConfig;

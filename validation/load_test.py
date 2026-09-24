@@ -46,24 +46,24 @@ def require_env(name: str) -> str:
 
 def database_options() -> dict[str, str]:
     options = {
-        "driver": str(Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)),
-        "entrypoint": "AdbcDriverProxyInit",
-        "proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
-        "proxy.target": require_env("ADBC_PROXY_TARGET"),
+        "driver": str(Path(require_env("GRAINLIFT_DRIVER")).resolve(strict=True)),
+        "entrypoint": "AdbcDriverGrainliftInit",
+        "grainlift.uri": require_env("GRAINLIFT_ENDPOINT"),
+        "grainlift.target": require_env("GRAINLIFT_TARGET"),
     }
     optional = {
-        "ADBC_PROXY_TOKEN": "proxy.auth.bearer_token",
-        "ADBC_PROXY_IROH_DIRECT_ADDRESS": "proxy.iroh.direct_address",
-        "ADBC_PROXY_IROH_SECRET_KEY": "proxy.iroh.secret_key",
-        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
+        "GRAINLIFT_TOKEN": "grainlift.auth.bearer_token",
+        "GRAINLIFT_IROH_DIRECT_ADDRESS": "grainlift.iroh.direct_address",
+        "GRAINLIFT_IROH_SECRET_KEY": "grainlift.iroh.secret_key",
+        "GRAINLIFT_TLS_CA": "grainlift.tls.ca",
+        "GRAINLIFT_TLS_CERT": "grainlift.tls.cert",
+        "GRAINLIFT_TLS_KEY": "grainlift.tls.key",
+        "GRAINLIFT_TLS_SERVER_NAME": "grainlift.tls.server_name",
     }
     for environment, option in optional.items():
         if value := os.environ.get(environment):
             options[option] = value
-    if value := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+    if value := os.environ.get("GRAINLIFT_DOWNSTREAM_URI"):
         options["uri"] = value
     return options
 
@@ -82,10 +82,10 @@ def prepare_dataset(backend: str, rows: int, payload_bytes: int) -> None:
     try:
         connection = adbc_driver_manager.AdbcConnection(database)
         try:
-            execute_update(connection, "DROP TABLE IF EXISTS proxy_load")
+            execute_update(connection, "DROP TABLE IF EXISTS grainlift_load")
             execute_update(
                 connection,
-                "CREATE TABLE proxy_load (id BIGINT NOT NULL, payload TEXT NOT NULL)",
+                "CREATE TABLE grainlift_load (id BIGINT NOT NULL, payload TEXT NOT NULL)",
             )
             if backend == "postgresql":
                 source = f"generate_series(0, {rows - 1}) AS id"
@@ -104,7 +104,7 @@ def prepare_dataset(backend: str, rows: int, payload_bytes: int) -> None:
                 raise RuntimeError(f"unsupported backend: {backend}")
             execute_update(
                 connection,
-                f"INSERT INTO proxy_load SELECT id, {payload} FROM {source}",
+                f"INSERT INTO grainlift_load SELECT id, {payload} FROM {source}",
             )
         finally:
             connection.close()
@@ -130,7 +130,7 @@ def consume_query(
     query_rows: int,
 ) -> tuple[int, int, int]:
     statement.set_sql_query(
-        "SELECT id, payload FROM proxy_load "
+        "SELECT id, payload FROM grainlift_load "
         f"WHERE id >= {offset} AND id < {offset + query_rows} ORDER BY id"
     )
     stream, _ = statement.execute_query()
@@ -292,10 +292,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    backend = require_env("ADBC_PROXY_BACKEND")
-    transport = require_env("ADBC_PROXY_TRANSPORT")
+    backend = require_env("GRAINLIFT_BACKEND")
+    transport = require_env("GRAINLIFT_TRANSPORT")
     server_pid = (
-        int(value) if (value := os.environ.get("ADBC_PROXY_SERVER_PID")) else None
+        int(value) if (value := os.environ.get("GRAINLIFT_SERVER_PID")) else None
     )
 
     sampler = RssSampler(server_pid)

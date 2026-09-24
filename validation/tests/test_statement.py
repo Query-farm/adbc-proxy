@@ -19,18 +19,18 @@ import adbc_drivers_validation.tests.statement
 import pytest
 from adbc_drivers_validation.tests.statement import TestStatement as BaseTestStatement
 
-from .proxy import get_quirks
+from .grainlift import get_quirks
 
 
 class TestStatement(BaseTestStatement):
     def test_parameter_execute(self, driver, conn) -> None:
-        if driver.name == "proxy-duckdb":
+        if driver.name == "grainlift-duckdb":
             pytest.skip("DuckDB 1.5.5 does not bind multiple parameter rows")
         return super().test_parameter_execute(driver, conn)
 
     def test_rows_affected(self, driver, conn) -> None:
         """Validate DML counts while accepting SQLite's stale DDL count."""
-        if driver.name != "proxy-sqlite":
+        if driver.name != "grainlift-sqlite":
             return super().test_rows_affected(driver, conn)
         table_name = "test_rows_affected"
         quoted_name = driver.quote_identifier(table_name)

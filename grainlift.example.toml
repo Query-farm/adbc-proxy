@@ -53,7 +53,7 @@ max_results_per_session = 64
 # [iroh]
 # issuer = "production"
 # secret_key_file = "/run/secrets/iroh-secret-key"
-# endpoint_info_file = "/run/adbc-proxy/iroh-endpoint.json"
+# endpoint_info_file = "/run/grainlift/iroh-endpoint.json"
 # disable_relays = false
 # A session keeps one control stream and can temporarily use a second stream
 # for Arrow results or bind data. Size these with the session quotas above.
@@ -77,7 +77,7 @@ development-token = "developer@example.com"
 # Production alternative to static_bearer_tokens (configure one, not both):
 # [auth.jwt]
 # issuer = "https://identity.example.com/"
-# audience = "adbc-proxy"
+# audience = "grainlift"
 # jwks_url = "https://identity.example.com/.well-known/jwks.json"
 # principal_claim = "sub"
 # refresh_interval_seconds = 600

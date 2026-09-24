@@ -52,28 +52,28 @@ def require_env(name: str) -> str:
 
 def options(response_budget: int) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "driver": str(Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)),
-        "entrypoint": "AdbcDriverProxyInit",
-        "proxy.uri": require_env("ADBC_PROXY_ENDPOINT"),
-        "proxy.target": require_env("ADBC_PROXY_TARGET"),
-        "proxy.max_response_bytes": response_budget,
+        "driver": str(Path(require_env("GRAINLIFT_DRIVER")).resolve(strict=True)),
+        "entrypoint": "AdbcDriverGrainliftInit",
+        "grainlift.uri": require_env("GRAINLIFT_ENDPOINT"),
+        "grainlift.target": require_env("GRAINLIFT_TARGET"),
+        "grainlift.max_response_bytes": response_budget,
     }
     optional = {
-        "ADBC_PROXY_TOKEN": "proxy.auth.bearer_token",
-        "ADBC_PROXY_IROH_DIRECT_ADDRESS": "proxy.iroh.direct_address",
-        "ADBC_PROXY_IROH_SECRET_KEY": "proxy.iroh.secret_key",
-        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
+        "GRAINLIFT_TOKEN": "grainlift.auth.bearer_token",
+        "GRAINLIFT_IROH_DIRECT_ADDRESS": "grainlift.iroh.direct_address",
+        "GRAINLIFT_IROH_SECRET_KEY": "grainlift.iroh.secret_key",
+        "GRAINLIFT_TLS_CA": "grainlift.tls.ca",
+        "GRAINLIFT_TLS_CERT": "grainlift.tls.cert",
+        "GRAINLIFT_TLS_KEY": "grainlift.tls.key",
+        "GRAINLIFT_TLS_SERVER_NAME": "grainlift.tls.server_name",
     }
     for environment, option in optional.items():
         if value := os.environ.get(environment):
             result[option] = value
-    if value := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+    if value := os.environ.get("GRAINLIFT_DOWNSTREAM_URI"):
         result["uri"] = value
-    if value := os.environ.get("ADBC_PROXY_MAX_BIND_BYTES"):
-        result["proxy.max_bind_bytes"] = int(value)
+    if value := os.environ.get("GRAINLIFT_MAX_BIND_BYTES"):
+        result["grainlift.max_bind_bytes"] = int(value)
     return result
 
 
@@ -136,11 +136,11 @@ def capture(action: Callable[[], Any]) -> dict[str, Any]:
 
 
 def incomplete_http_request(mode: str, wait_seconds: float) -> str:
-    endpoint = urllib.parse.urlparse(require_env("ADBC_PROXY_ENDPOINT"))
+    endpoint = urllib.parse.urlparse(require_env("GRAINLIFT_ENDPOINT"))
     host = endpoint.hostname or "127.0.0.1"
     port = endpoint.port or 80
-    path = "/org.queryfarm.AdbcProxy.v1/open_connection"
-    token = os.environ.get("ADBC_PROXY_TOKEN", "")
+    path = "/org.queryfarm.Grainlift.v1/open_connection"
+    token = os.environ.get("GRAINLIFT_TOKEN", "")
     content_length = 70 * MIB if mode == "oversized_content_length" else MIB
     headers = (
         f"POST {path} HTTP/1.1\r\n"
@@ -168,7 +168,7 @@ def bind_once(connection: Any, backend: str, payload_size: int, stream: bool) ->
     statement = adbc_driver_manager.AdbcStatement(connection)
     try:
         statement.set_sql_query(
-            f"INSERT INTO proxy_large_payload (payload) VALUES ({placeholder})"
+            f"INSERT INTO grainlift_large_payload (payload) VALUES ({placeholder})"
         )
         batch = pyarrow.record_batch(
             [pyarrow.array([b"x" * payload_size], type=pyarrow.binary())],
@@ -207,15 +207,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    backend = require_env("ADBC_PROXY_BACKEND")
-    transport = require_env("ADBC_PROXY_TRANSPORT")
+    backend = require_env("GRAINLIFT_BACKEND")
+    transport = require_env("GRAINLIFT_TRANSPORT")
     server_pid = (
-        int(value) if (value := os.environ.get("ADBC_PROXY_SERVER_PID")) else None
+        int(value) if (value := os.environ.get("GRAINLIFT_SERVER_PID")) else None
     )
     budget = args.response_budget_mib * MIB
-    configured_bind_cap = int(os.environ.get("ADBC_PROXY_MAX_BIND_BYTES", BIND_CAP))
+    configured_bind_cap = int(os.environ.get("GRAINLIFT_MAX_BIND_BYTES", BIND_CAP))
     server_bind_cap = int(
-        os.environ.get("ADBC_PROXY_SERVER_MAX_BIND_BYTES", configured_bind_cap)
+        os.environ.get("GRAINLIFT_SERVER_MAX_BIND_BYTES", configured_bind_cap)
     )
     report: dict[str, Any] = {
         "backend": backend,
@@ -254,12 +254,12 @@ def main() -> None:
                 "connection did not recover after response boundary probes"
             )
 
-        if args.heavy or "ADBC_PROXY_MAX_BIND_BYTES" in os.environ:
-            statement_update(connection, "DROP TABLE IF EXISTS proxy_large_payload")
+        if args.heavy or "GRAINLIFT_MAX_BIND_BYTES" in os.environ:
+            statement_update(connection, "DROP TABLE IF EXISTS grainlift_large_payload")
             blob_type = "BYTEA" if backend == "postgresql" else "BLOB"
             statement_update(
                 connection,
-                f"CREATE TABLE proxy_large_payload (payload {blob_type} NOT NULL)",
+                f"CREATE TABLE grainlift_large_payload (payload {blob_type} NOT NULL)",
             )
             # Four KiB leaves room for Arrow array and IPC bookkeeping while
             # bracketing the configured cumulative native-stream budget.
@@ -348,7 +348,7 @@ def main() -> None:
                 raise AssertionError(
                     f"{binding} near-cap envelope was {near}, expected {expected} on {transport}"
                 )
-    if args.heavy or "ADBC_PROXY_MAX_BIND_BYTES" in os.environ:
+    if args.heavy or "GRAINLIFT_MAX_BIND_BYTES" in os.environ:
         for binding in ("bind", "bind_stream"):
             if (
                 server_bind_cap >= configured_bind_cap

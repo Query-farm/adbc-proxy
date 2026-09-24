@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use adbc_proxy_protocol::WireOption;
+use grainlift_protocol::WireOption;
 use serde::Deserialize;
 
 use crate::session::{SessionLimits, TargetAuthorizer};
@@ -127,9 +127,9 @@ impl Default for ServerConfig {
             // Native bind exchanges carry one Arrow batch per HTTP turn. This
             // is a per-turn transport limit; max_bind_bytes independently
             // bounds the cumulative staged stream.
-            max_request_body_bytes: adbc_proxy_protocol::MAX_BIND_STREAM_BYTES
-                + adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES,
-            max_bind_bytes: adbc_proxy_protocol::MAX_BIND_STREAM_BYTES,
+            max_request_body_bytes: grainlift_protocol::MAX_BIND_STREAM_BYTES
+                + grainlift_protocol::BIND_ENVELOPE_HEADROOM_BYTES,
+            max_bind_bytes: grainlift_protocol::MAX_BIND_STREAM_BYTES,
             max_sessions: 1024,
             max_sessions_per_principal: 32,
             max_statements_per_session: 64,
@@ -289,10 +289,10 @@ impl Config {
         if self.server.max_bind_bytes == 0 {
             return Err("server.max_bind_bytes must be positive".into());
         }
-        if self.server.max_bind_bytes > adbc_proxy_protocol::MAX_CONFIGURABLE_BIND_BYTES {
+        if self.server.max_bind_bytes > grainlift_protocol::MAX_CONFIGURABLE_BIND_BYTES {
             return Err(format!(
                 "server.max_bind_bytes must not exceed {}",
-                adbc_proxy_protocol::MAX_CONFIGURABLE_BIND_BYTES
+                grainlift_protocol::MAX_CONFIGURABLE_BIND_BYTES
             )
             .into());
         }
@@ -512,8 +512,8 @@ driver = "adbc_driver_sqlite"
     fn default_http_turn_budget_includes_vgi_message_headroom() {
         assert_eq!(
             ServerConfig::default().max_request_body_bytes,
-            adbc_proxy_protocol::MAX_BIND_STREAM_BYTES
-                + adbc_proxy_protocol::BIND_ENVELOPE_HEADROOM_BYTES
+            grainlift_protocol::MAX_BIND_STREAM_BYTES
+                + grainlift_protocol::BIND_ENVELOPE_HEADROOM_BYTES
         );
     }
 
@@ -532,8 +532,8 @@ driver = "adbc_driver_sqlite"
 
         let above_adbc_integer = format!(
             "[server]\nrequire_authentication = false\nmax_bind_bytes = {}\nmax_request_body_bytes = {}\n{TARGET}",
-            adbc_proxy_protocol::MAX_CONFIGURABLE_BIND_BYTES + 1,
-            adbc_proxy_protocol::MAX_VGI_MESSAGE_BYTES
+            grainlift_protocol::MAX_CONFIGURABLE_BIND_BYTES + 1,
+            grainlift_protocol::MAX_VGI_MESSAGE_BYTES
         );
         assert!(Config::from_toml(&above_adbc_integer).is_err());
     }
@@ -566,7 +566,7 @@ driver = "adbc_driver_sqlite"
         assert!(Config::from_toml(&static_auth).is_ok());
 
         let jwt = format!(
-            "[auth.jwt]\nissuer = \"https://issuer.example/\"\naudience = \"adbc-proxy\"\njwks_url = \"https://issuer.example/.well-known/jwks.json\"\n{TARGET}"
+            "[auth.jwt]\nissuer = \"https://issuer.example/\"\naudience = \"grainlift\"\njwks_url = \"https://issuer.example/.well-known/jwks.json\"\n{TARGET}"
         );
         assert!(Config::from_toml(&jwt).is_ok());
     }

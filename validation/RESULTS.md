@@ -52,9 +52,9 @@ $ dbc install sqlite --level user --json
 Command:
 
 ```sh
-ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh smoke sqlite
-ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh smoke duckdb
-ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh smoke postgresql
+GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh smoke sqlite
+GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh smoke duckdb
+GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh smoke postgresql
 ```
 
 Result:
@@ -71,7 +71,7 @@ with SQLFlite v1.5.5, DataFusion 0.25.0, and Trino 0.4.0 with Trino 483. The
 same pass reran SQLite, DuckDB, and PostgreSQL. Each smoke additionally proved
 that disallowed database and runtime connection options return
 `INVALID_ARGUMENT` without reflecting their values; SQLite supplied its real
-database `uri` from the client alongside an independent `proxy.uri`.
+database `uri` from the client alongside an independent `grainlift.uri`.
 Microsoft SQL Server remains assigned to the x86 Linux CI service because the
 local host is arm64.
 
@@ -86,9 +86,9 @@ byte-stream transport. The full SQLite Foundry suite was also run over each:
 
 ```text
                          SQLite smoke  DuckDB smoke  PostgreSQL smoke  SQLite Foundry
-ADBC_PROXY_TRANSPORT=tcp:      passed        passed             passed  148 passed, 135 skipped
-ADBC_PROXY_TRANSPORT=mtls:     passed        passed             passed  148 passed, 135 skipped
-ADBC_PROXY_TRANSPORT=iroh:     passed        passed             passed  148 passed, 135 skipped
+GRAINLIFT_TRANSPORT=tcp:      passed        passed             passed  148 passed, 135 skipped
+GRAINLIFT_TRANSPORT=mtls:     passed        passed             passed  148 passed, 135 skipped
+GRAINLIFT_TRANSPORT=iroh:     passed        passed             passed  148 passed, 135 skipped
 ```
 
 These runs used the exported proxy dynamic library. The TCP clients retained
@@ -103,9 +103,9 @@ Iroh QUIC stream; it did not use `httpi://`.
 Command:
 
 ```sh
-ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh foundry sqlite -q
-ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh foundry duckdb -q
-ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh foundry postgresql -q
+GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh foundry sqlite -q
+GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh foundry duckdb -q
+GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh foundry postgresql -q
 ```
 
 Result:

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name = "ADBC Proxy Driver"
+name = "Grainlift ADBC Driver"
 description = "An ADBC client driver for connecting to remote, server-hosted ADBC drivers"
 publisher = "Query Farm LLC"
 license = "Apache-2.0"

@@ -20,13 +20,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use adbc_proxy_server::backend::DriverManagerBackend;
-use adbc_proxy_server::config::{AuthConfig, Config, IrohConfig, TcpConfig, TcpTlsConfig};
-use adbc_proxy_server::service::build_server_with_max_bind;
-use adbc_proxy_server::session::SessionManager;
 use axum::http::StatusCode;
 use axum::routing::get;
 use clap::Parser;
+use grainlift_server::backend::DriverManagerBackend;
+use grainlift_server::config::{AuthConfig, Config, IrohConfig, TcpConfig, TcpTlsConfig};
+use grainlift_server::service::build_server_with_max_bind;
+use grainlift_server::session::SessionManager;
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{Protocol, WithExportConfig};
@@ -51,9 +51,9 @@ use vgi_rpc_iroh::{CancellationToken, IrohServer, IrohServerOptions, VGI_IROH_AL
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Args {
-    #[arg(long, env = "ADBC_PROXY_CONFIG", default_value = "adbc-proxy.toml")]
+    #[arg(long, env = "GRAINLIFT_CONFIG", default_value = "grainlift.toml")]
     config: PathBuf,
-    #[arg(long, env = "ADBC_PROXY_SERVER_ID")]
+    #[arg(long, env = "GRAINLIFT_SERVER_ID")]
     server_id: Option<String>,
 }
 
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let server_id = args
         .server_id
-        .unwrap_or_else(|| format!("adbc-proxy-{}", std::process::id()));
+        .unwrap_or_else(|| format!("grainlift-{}", std::process::id()));
     let server = Arc::new(build_server_with_max_bind(
         manager.clone(),
         server_id,
@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_graceful_shutdown(http_shutdown.cancelled_owned())
             .await
     });
-    info!(address = %config.server.listen, transport = "http", "ADBC proxy listening");
+    info!(address = %config.server.listen, transport = "http", "Grainlift listening");
 
     let reaper_manager = Arc::downgrade(&manager);
     let reap_interval = Duration::from_secs(config.server.session_reap_interval_seconds);
@@ -268,7 +268,7 @@ async fn start_tcp_listener(
     });
     match bound_rx.await {
         Ok(address) => {
-            info!(%address, transport, "ADBC proxy listening");
+            info!(%address, transport, "Grainlift listening");
             Ok(task)
         }
         Err(_) => match task.await {
@@ -296,7 +296,7 @@ async fn start_iroh_listener(
     let endpoint = builder.bind().await?;
     let endpoint_id = endpoint.id();
     let endpoint_addr = endpoint.addr();
-    info!(%endpoint_id, ?endpoint_addr, transport = "iroh", "ADBC proxy listening");
+    info!(%endpoint_id, ?endpoint_addr, transport = "iroh", "Grainlift listening");
     if let Some(path) = &config.endpoint_info_file {
         let record = serde_json::json!({
             "endpoint_id": endpoint_id.to_string(),
@@ -443,7 +443,7 @@ async fn readiness() -> StatusCode {
 
 fn init_observability() -> Result<Option<SdkTracerProvider>, Box<dyn std::error::Error>> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "adbc_proxy_server=info,vgi_rpc=info,vgi_rpc.otel=info".into());
+        .unwrap_or_else(|_| "grainlift_server=info,vgi_rpc=info,vgi_rpc.otel=info".into());
     let fmt = tracing_subscriber::fmt::layer().with_span_events(FmtSpan::CLOSE);
 
     if otlp_enabled() {
@@ -452,10 +452,10 @@ fn init_observability() -> Result<Option<SdkTracerProvider>, Box<dyn std::error:
             .with_protocol(Protocol::HttpBinary)
             .build()?;
         let provider = SdkTracerProvider::builder()
-            .with_resource(Resource::builder().with_service_name("adbc-proxy").build())
+            .with_resource(Resource::builder().with_service_name("grainlift").build())
             .with_batch_exporter(exporter)
             .build();
-        let tracer = provider.tracer("adbc-proxy");
+        let tracer = provider.tracer("grainlift");
         global::set_tracer_provider(provider.clone());
         tracing_subscriber::registry()
             .with(filter)

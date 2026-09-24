@@ -147,7 +147,7 @@ impl SessionWorker {
     fn start(timeout: Duration) -> Result<Self, AdbcError> {
         let (tx, rx) = mpsc::sync_channel::<WorkerJob>(32);
         thread::Builder::new()
-            .name("adbc-proxy-session".to_string())
+            .name("grainlift-session".to_string())
             .spawn(move || {
                 while let Ok(job) = rx.recv() {
                     job();
@@ -323,7 +323,7 @@ impl SessionManager {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         let backend = Arc::clone(&self.backend);
         let spawn = thread::Builder::new()
-            .name("adbc-proxy-open".to_string())
+            .name("grainlift-open".to_string())
             .spawn(move || {
                 let result = backend.open(&target, database_options, connection_options);
                 let _ = reply_tx.send(result);
@@ -361,7 +361,7 @@ impl SessionManager {
             Err(error) => {
                 self.release_open_reservation(&principal)?;
                 let _ = thread::Builder::new()
-                    .name("adbc-proxy-failed-open-cleanup".to_string())
+                    .name("grainlift-failed-open-cleanup".to_string())
                     .spawn(move || drop(resources));
                 return Err(error);
             }
@@ -972,7 +972,7 @@ impl Drop for Session {
         // Keep both off the registry/shutdown thread; a process supervisor is
         // the ultimate hard deadline for a driver that ignores cancellation.
         let _ = thread::Builder::new()
-            .name("adbc-proxy-session-cleanup".to_string())
+            .name("grainlift-session-cleanup".to_string())
             .spawn(move || {
                 let _ = connection_cancel.try_cancel();
                 for cancel in statement_cancels {

@@ -17,12 +17,12 @@
 
 # Contributing
 
-Thank you for helping improve ADBC Proxy. All contributors are expected to
-follow the repository's [Code of Conduct](https://github.com/Query-farm/adbc-proxy?tab=coc-ov-file#readme).
+Thank you for helping improve Grainlift. All contributors are expected to
+follow the repository's [Code of Conduct](https://github.com/Query-farm/grainlift?tab=coc-ov-file#readme).
 
-Use the [GitHub issue tracker](https://github.com/Query-farm/adbc-proxy/issues)
+Use the [GitHub issue tracker](https://github.com/Query-farm/grainlift/issues)
 for bugs and feature requests. Report potential vulnerabilities through the
-repository's [private security-advisory form](https://github.com/Query-farm/adbc-proxy/security/advisories/new),
+repository's [private security-advisory form](https://github.com/Query-farm/grainlift/security/advisories/new),
 not a public issue.
 
 ## Build and test

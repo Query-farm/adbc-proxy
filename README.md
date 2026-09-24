@@ -21,18 +21,19 @@
   </a>
 </p>
 
-<h1 align="center">ADBC Proxy</h1>
+<h1 align="center">Grainlift</h1>
 
 <p align="center">
-  <a href="https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/adbc-proxy/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/Query-farm/grainlift/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/grainlift/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://arrow.apache.org/adbc/current/"><img src="https://img.shields.io/badge/Apache%20Arrow-ADBC-00A4E4?logo=apachearrow&amp;logoColor=white" alt="Apache Arrow ADBC"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.97%2B-000000?logo=rust&amp;logoColor=white" alt="Rust 1.97 or newer"></a>
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0 license"></a>
 </p>
 
-ADBC Proxy makes server-installed [ADBC](https://arrow.apache.org/adbc/current/)
-drivers available to ordinary ADBC applications over a network. Applications
-load the proxy's ADBC driver and continue to use the standard ADBC API; the
+Grainlift is the network bridge for
+[ADBC](https://arrow.apache.org/adbc/current/). It makes server-installed ADBC
+drivers available to ordinary ADBC applications. Applications load the
+Grainlift driver and continue to use the standard ADBC API; the
 service owns the downstream database connection, statements, transactions,
 and [Apache Arrow](https://arrow.apache.org/) result streams. The wire protocol
 runs on [VGI-RPC](https://vgi-rpc.query.farm/).
@@ -40,10 +41,10 @@ runs on [VGI-RPC](https://vgi-rpc.query.farm/).
 ## Architecture
 
 <p align="center">
-  <img src=".github/assets/architecture.svg" alt="ADBC applications use the client-side proxy driver to reach the stateful proxy service over VGI-RPC; the service authenticates callers and connects through server-installed ADBC drivers to downstream databases.">
+  <img src=".github/assets/architecture.svg" alt="ADBC applications use the client-side Grainlift driver to reach the stateful Grainlift service over VGI-RPC; the service authenticates callers and connects through server-installed ADBC drivers to downstream databases.">
 </p>
 
-The client remains an ordinary ADBC application. The proxy service owns every
+The client remains an ordinary ADBC application. Grainlift owns every
 stateful downstream object and selects a server-installed driver from the
 authorized target configuration.
 
@@ -53,7 +54,7 @@ published binary packages are not available yet.
 ## Features
 
 - Standard ADBC 1.1 client interface and C entrypoint
-  `AdbcDriverProxyInit`.
+  `AdbcDriverGrainliftInit`.
 - Server-side loading of [SQLite](https://www.sqlite.org/),
   [DuckDB](https://duckdb.org/), [PostgreSQL](https://www.postgresql.org/), and
   other ADBC drivers.
@@ -76,7 +77,7 @@ operations are returned as ADBC `NOT_IMPLEMENTED` errors.
 
 ## Quick start
 
-The example below runs the proxy against SQLite on the same machine.
+The example below runs Grainlift against SQLite on the same machine.
 
 ### 1. Install prerequisites
 
@@ -88,25 +89,25 @@ driver:
 dbc install sqlite --level user
 ```
 
-Only the proxy server needs the downstream driver. Client machines need the
-proxy shared library instead.
+Only the Grainlift server needs the downstream driver. Client machines need
+the Grainlift shared library instead.
 
-### 2. Build the proxy
+### 2. Build Grainlift
 
 ```console
-git clone https://github.com/Query-farm/adbc-proxy.git
-cd adbc-proxy
+git clone https://github.com/Query-farm/grainlift.git
+cd grainlift
 cargo build --release --workspace
 ```
 
 The build produces:
 
-- `target/release/adbc-proxy-server`
-- `target/release/libadbc_driver_proxy.so` on Linux
-- `target/release/libadbc_driver_proxy.dylib` on macOS
+- `target/release/grainlift-server`
+- `target/release/libadbc_driver_grainlift.so` on Linux
+- `target/release/libadbc_driver_grainlift.dylib` on macOS
 
 Foundry packaging builds the client driver for Linux amd64/arm64, macOS arm64,
-and Windows amd64. End-to-end proxy-service validation currently runs on
+and Windows amd64. End-to-end Grainlift service validation currently runs on
 Linux.
 
 ### 3. Start the server
@@ -116,12 +117,12 @@ loopback, and maps the bearer token `development-token` to the principal
 `developer@example.com`.
 
 ```console
-cp adbc-proxy.example.toml adbc-proxy.toml
-./target/release/adbc-proxy-server --config adbc-proxy.toml
+cp grainlift.example.toml grainlift.toml
+./target/release/grainlift-server --config grainlift.toml
 ```
 
-The configuration can also be selected with `ADBC_PROXY_CONFIG`. Use
-`ADBC_PROXY_SERVER_ID` to assign a stable server identifier for telemetry.
+The configuration can also be selected with `GRAINLIFT_CONFIG`. Use
+`GRAINLIFT_SERVER_ID` to assign a stable server identifier for telemetry.
 
 Check readiness from another terminal:
 
@@ -139,22 +140,22 @@ and [PyArrow](https://arrow.apache.org/docs/python/):
 python3 -m pip install adbc-driver-manager pyarrow
 ```
 
-Then load the proxy driver just like any other ADBC driver:
+Then load Grainlift just like any other ADBC driver:
 
 ```python
 from pathlib import Path
 
 import adbc_driver_manager.dbapi as adbc
 
-proxy_driver = Path("target/release/libadbc_driver_proxy.dylib").resolve()
+grainlift_driver = Path("target/release/libadbc_driver_grainlift.dylib").resolve()
 
 with adbc.connect(
-    driver=proxy_driver,
-    entrypoint="AdbcDriverProxyInit",
+    driver=grainlift_driver,
+    entrypoint="AdbcDriverGrainliftInit",
     db_kwargs={
-        "proxy.uri": "http://127.0.0.1:8080",
-        "proxy.target": "sqlite",
-        "proxy.auth.bearer_token": "development-token",
+        "grainlift.uri": "http://127.0.0.1:8080",
+        "grainlift.target": "sqlite",
+        "grainlift.auth.bearer_token": "development-token",
     },
     autocommit=True,
 ) as connection:
@@ -164,21 +165,21 @@ with adbc.connect(
         print(table)
 ```
 
-Use `libadbc_driver_proxy.so` on Linux. The repository also includes a
+Use `libadbc_driver_grainlift.so` on Linux. The repository also includes a
 complete [Python example](examples/python_client.py), which can be run with:
 
 ```console
-export ADBC_PROXY_DRIVER="$PWD/target/release/libadbc_driver_proxy.dylib"
-export ADBC_PROXY_ENDPOINT="http://127.0.0.1:8080"
-export ADBC_PROXY_TARGET="sqlite"
-export ADBC_PROXY_TOKEN="development-token"
+export GRAINLIFT_DRIVER="$PWD/target/release/libadbc_driver_grainlift.dylib"
+export GRAINLIFT_ENDPOINT="http://127.0.0.1:8080"
+export GRAINLIFT_TARGET="sqlite"
+export GRAINLIFT_TOKEN="development-token"
 python3 examples/python_client.py
 ```
 
 ## Server configuration
 
 The server reads a TOML configuration file. See
-[`adbc-proxy.example.toml`](adbc-proxy.example.toml) for all resource limits
+[`grainlift.example.toml`](grainlift.example.toml) for all resource limits
 and transport sections.
 
 Iroh clients pool a physical QUIC connection and allocate one VGI control
@@ -225,7 +226,7 @@ allow every non-server-controlled option and are intended for trusted targets.
 Disallowed options are rejected rather than silently ignored. Proxy transport
 options are never forwarded.
 
-The explicit `proxy.uri` option identifies the proxy. When it is present,
+The explicit `grainlift.uri` option identifies the Grainlift service. When it is present,
 the standard ADBC `uri` database option is forwarded to the downstream driver,
 which supports caller-selected destinations when target policy allows it:
 
@@ -243,11 +244,11 @@ allowed_client_connection_options = [
 
 ```python
 with adbc.connect(
-    driver=proxy_driver,
-    entrypoint="AdbcDriverProxyInit",
+    driver=grainlift_driver,
+    entrypoint="AdbcDriverGrainliftInit",
     db_kwargs={
-        "proxy.uri": "iroh://<proxy-endpoint-id>",
-        "proxy.target": "postgresql-byoc",
+        "grainlift.uri": "grainlift+iroh://<endpoint-id>",
+        "grainlift.target": "postgresql-byoc",
         "uri": "postgresql://database.example/app",
         "username": "alice",
         "password": "...",
@@ -260,20 +261,19 @@ with adbc.connect(
     ...
 ```
 
-For compatibility, `uri` is still treated as the proxy endpoint when
-`proxy.uri` is absent; that legacy form cannot also provide a downstream
-URI.
+When `grainlift.uri` is absent, the standard ADBC `uri` option identifies the
+Grainlift endpoint. This compact form cannot also provide a downstream URI.
 
 `db_kwargs` and `conn_kwargs` set creation-time database and connection
 options. After connection creation, Python applications can use
 `connection.adbc_connection.set_options(...)` and
 `cursor.adbc_statement.set_options(...)` for runtime or statement options.
-The proxy preserves arbitrary option names and all current ADBC value types:
+Grainlift preserves arbitrary option names and all current ADBC value types:
 string, bytes, signed 64-bit integer, and double. Boolean ADBC options use the
 standard `"true"` and `"false"` string values. The selected downstream driver
 still determines whether a particular option and mutation phase are supported.
 Connection and statement getters query the downstream driver. Database getters
-reflect the caller-side proxy database object; server-injected database values
+reflect the caller-side Grainlift database object; server-injected database values
 are deliberately not returned to clients, which prevents credential disclosure.
 
 ### Authentication and authorization
@@ -294,7 +294,7 @@ Production HTTP deployments can replace static tokens with a JWT issuer:
 ```toml
 [auth.jwt]
 issuer = "https://identity.example.com/"
-audience = "adbc-proxy"
+audience = "grainlift"
 jwks_url = "https://identity.example.com/.well-known/jwks.json"
 principal_claim = "sub"
 ```
@@ -306,31 +306,36 @@ deploying the service.
 
 ## Client options
 
-Pass these as ADBC database options when opening the proxy driver:
+Pass these as ADBC database options when opening the Grainlift driver:
 
 | Option | Purpose | Default |
 | --- | --- | --- |
-| `proxy.uri` | Proxy endpoint using `http://`, `https://`, `tcp://`, `tls+tcp://`, or `iroh://` | required (`uri` is a legacy fallback) |
-| `proxy.target` | Server-configured target name | required |
-| `proxy.auth.bearer_token` | HTTP(S) bearer token | none |
-| `proxy.request_timeout_ms` | Timeout for each RPC | `30000` |
-| `proxy.max_response_bytes` | Maximum accepted HTTP response size | `268435456` |
-| `proxy.max_bind_bytes` | Cumulative parameter-bind budget | `67108864` |
-| `proxy.tls.ca` | CA bundle for `tls+tcp://` | required for mTLS |
-| `proxy.tls.cert` | Client certificate chain for `tls+tcp://` | required for mTLS |
-| `proxy.tls.key` | Client private key for `tls+tcp://` | required for mTLS |
-| `proxy.tls.server_name` | TLS server name | endpoint host |
-| `proxy.iroh.secret_key` | Stable Iroh client secret key | generated per process |
-| `proxy.iroh.direct_address` | Direct Iroh `host:port` discovery hint | relay/discovery |
+| `grainlift.uri` | Grainlift endpoint; accepts product or native transport URLs | required (`uri` is also accepted) |
+| `grainlift.target` | Server-configured target name | required |
+| `grainlift.auth.bearer_token` | HTTP(S) bearer token | none |
+| `grainlift.request_timeout_ms` | Timeout for each RPC | `30000` |
+| `grainlift.max_response_bytes` | Maximum accepted HTTP response size | `268435456` |
+| `grainlift.max_bind_bytes` | Cumulative parameter-bind budget | `67108864` |
+| `grainlift.tls.ca` | CA bundle for `tls+tcp://` | required for mTLS |
+| `grainlift.tls.cert` | Client certificate chain for `tls+tcp://` | required for mTLS |
+| `grainlift.tls.key` | Client private key for `tls+tcp://` | required for mTLS |
+| `grainlift.tls.server_name` | TLS server name | endpoint host |
+| `grainlift.iroh.secret_key` | Stable Iroh client secret key | generated per process |
+| `grainlift.iroh.direct_address` | Direct Iroh `host:port` discovery hint | relay/discovery |
 
 ## Transports
 
-| Endpoint | Authentication | Intended use |
-| --- | --- | --- |
-| `http://` / `https://` | Static bearer token or JWT | HTTP ingress, reverse proxies, and service meshes |
-| `tcp://host:port` | None | Loopback-only development and trusted local routing |
-| `tls+tcp://host:port` | Mutual TLS with a verified SPIFFE identity | Direct production TCP |
-| `iroh://<endpoint-id>` | Cryptographic [Iroh](https://www.iroh.computer/) endpoint identity | Authenticated QUIC with direct paths and relay fallback |
+`grainlift://` selects HTTPS by default. Prefix an explicit transport with the
+product name when a self-describing URL is useful; native VGI-RPC transport
+URLs are accepted as well.
+
+| Endpoint | Native equivalent | Authentication | Intended use |
+| --- | --- | --- | --- |
+| `grainlift://host` / `grainlift+https://host` | `https://host` | Static bearer token or JWT | Secure HTTP ingress, reverse proxies, and service meshes |
+| `grainlift+http://host` | `http://host` | Static bearer token or JWT | Local HTTP or TLS-terminating ingress |
+| `grainlift+tcp://host:port` | `tcp://host:port` | None | Loopback-only development and trusted local routing |
+| `grainlift+tls+tcp://host:port` | `tls+tcp://host:port` | Mutual TLS with a verified SPIFFE identity | Direct production TCP |
+| `grainlift+iroh://<endpoint-id>` | `iroh://<endpoint-id>` | Cryptographic [Iroh](https://www.iroh.computer/) endpoint identity | Authenticated QUIC with direct paths and relay fallback |
 
 The server's HTTP listener is plaintext. Terminate TLS in a reverse proxy,
 sidecar, or service mesh and keep the server listener on loopback. Setting
@@ -338,9 +343,9 @@ sidecar, or service mesh and keep the server listener on loopback. Setting
 does not add TLS.
 
 Plain TCP cannot be used when authentication is required. Production TCP uses
-the `[tcp.tls]` server configuration and the four `proxy.tls.*` client
+the `[tcp.tls]` server configuration and the four `grainlift.tls.*` client
 options. [Iroh](https://www.iroh.computer/) provides authenticated QUIC
-connections with direct paths and relay fallback. Proxy servers map allowed
+connections with direct paths and relay fallback. Grainlift servers map allowed
 client endpoint IDs to principals in `iroh.principals`; persist the server
 secret-key file so its endpoint ID stays stable.
 
@@ -394,8 +399,8 @@ Trino, and Microsoft SQL Server drivers:
 dbc install "sqlite=1.12.0" --level user
 ./validation/run_external.sh smoke sqlite
 ./validation/run_external.sh foundry sqlite -q
-ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
-ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load sqlite \
+GRAINLIFT_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
+GRAINLIFT_TRANSPORT=iroh ./validation/run_external.sh load sqlite \
   --workers 32 --iterations 50
 ```
 
@@ -405,9 +410,9 @@ selection, payload-boundary testing, fault injection, load testing, and the
 
 ## Repository layout
 
-- `crates/adbc-driver-proxy`: client-side ADBC shared library.
-- `crates/adbc-proxy-server`: proxy service and downstream driver manager.
-- `crates/adbc-proxy-protocol`: typed ADBC-over-VGI wire contract.
+- `crates/adbc-driver-grainlift`: client-side ADBC shared library.
+- `crates/grainlift-server`: Grainlift service and downstream driver manager.
+- `crates/grainlift-protocol`: typed ADBC-over-VGI wire contract.
 - `examples`: client examples.
 - `validation`: external conformance, fault, payload, and load tests.
 - `docs`: security and process-isolation guidance.

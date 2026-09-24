@@ -30,7 +30,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const PROTOCOL_NAME: &str = "org.queryfarm.AdbcProxy.v1";
+pub const PROTOCOL_NAME: &str = "org.queryfarm.Grainlift.v1";
 pub const PROTOCOL_VERSION: &str = "0.2.0";
 /// Default cumulative native parameter-stream budget.
 pub const MAX_BIND_STREAM_BYTES: usize = 64 * 1024 * 1024;
@@ -49,7 +49,7 @@ pub const MAX_CONFIGURABLE_BIND_BYTES: usize = if usize::BITS >= 64 {
 };
 
 /// Per-turn metadata marking successful end-of-input for a bind exchange.
-pub const BIND_FINISH_METADATA_KEY: &str = "PROXY:bind_finish";
+pub const BIND_FINISH_METADATA_KEY: &str = "GRAINLIFT:bind_finish";
 
 pub mod method {
     pub const OPEN_CONNECTION: &str = "open_connection";

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from adbc_drivers_validation import generate_documentation
 
-from .proxy import get_quirks
+from .grainlift import get_quirks
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -30,14 +30,14 @@ if __name__ == "__main__":
     repository = Path(__file__).resolve().parents[2]
     reports = sorted(repository.glob("validation-report*.xml"))
     generate_documentation.generate(
-        "proxy",
+        "grainlift",
         get_quirks,
         [
-            ("proxy-sqlite", "SQLite"),
-            ("proxy-duckdb", "DuckDB"),
-            ("proxy-postgresql", "PostgreSQL"),
+            ("grainlift-sqlite", "SQLite"),
+            ("grainlift-duckdb", "DuckDB"),
+            ("grainlift-postgresql", "PostgreSQL"),
         ],
         reports,
-        repository / "docs/proxy.md",
+        repository / "docs/grainlift.md",
         args.output.resolve(),
     )

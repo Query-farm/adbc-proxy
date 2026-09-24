@@ -171,7 +171,7 @@ fn runtime() -> Result<&'static tokio::runtime::Runtime, PoolError> {
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
-                .thread_name("adbc-proxy-iroh")
+                .thread_name("grainlift-iroh")
                 .enable_all()
                 .build()
                 .map_err(|error| PoolError::new("create Iroh runtime", error))

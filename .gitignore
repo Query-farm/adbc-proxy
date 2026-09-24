@@ -19,8 +19,8 @@
 /validation-report*.xml
 .env.build
 .env.override
-.proxy-validation.pid
-.proxy-validation-container
+.grainlift-validation.pid
+.grainlift-validation-container
 .doit.db
 .ruff_cache/
 __pycache__/

@@ -18,7 +18,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 validation_root="$repo_root/validation"
-python_cmd=${ADBC_PROXY_VALIDATION_PYTHON:-}
+python_cmd=${GRAINLIFT_VALIDATION_PYTHON:-}
 if [[ -z "$python_cmd" ]]; then
   if command -v python3.13 >/dev/null 2>&1; then
     python_cmd=python3.13
@@ -27,11 +27,11 @@ if [[ -z "$python_cmd" ]]; then
   fi
 fi
 if ! "$python_cmd" -c 'import tomllib' >/dev/null 2>&1; then
-  echo "Validation setup requires Python 3.11+ (set ADBC_PROXY_VALIDATION_PYTHON)" >&2
+  echo "Validation setup requires Python 3.11+ (set GRAINLIFT_VALIDATION_PYTHON)" >&2
   exit 2
 fi
-token="adbc-proxy-validation-token"
-transport=${ADBC_PROXY_TRANSPORT:-http}
+token="grainlift-validation-token"
+transport=${GRAINLIFT_TRANSPORT:-http}
 case "$transport" in
   http|tcp|mtls|iroh) ;;
   *)
@@ -44,7 +44,7 @@ mode=${1:-smoke}
 if [[ $# -gt 0 ]]; then
   shift
 fi
-backend=${ADBC_PROXY_BACKEND:-sqlite}
+backend=${GRAINLIFT_BACKEND:-sqlite}
 if [[ $# -gt 0 && "$1" =~ ^(sqlite|duckdb|postgresql|mysql|flightsql|datafusion|trino|mssql)$ ]]; then
   backend=$1
   shift
@@ -58,16 +58,16 @@ case "$backend" in
 esac
 target="$backend"
 
-if [[ "${ADBC_PROXY_SKIP_BUILD:-0}" != "1" ]]; then
+if [[ "${GRAINLIFT_SKIP_BUILD:-0}" != "1" ]]; then
   cargo build --release --workspace --manifest-path "$repo_root/Cargo.toml"
 fi
 
 case "$(uname -s)" in
   Darwin)
-    proxy_driver="$repo_root/target/release/libadbc_driver_proxy.dylib"
+    grainlift_driver="$repo_root/target/release/libadbc_driver_grainlift.dylib"
     ;;
   Linux)
-    proxy_driver="$repo_root/target/release/libadbc_driver_proxy.so"
+    grainlift_driver="$repo_root/target/release/libadbc_driver_grainlift.so"
     ;;
   *)
     echo "Unsupported platform: $(uname -s)" >&2
@@ -75,8 +75,8 @@ case "$(uname -s)" in
     ;;
 esac
 
-if [[ ! -f "$proxy_driver" ]]; then
-  echo "Proxy driver was not built at $proxy_driver" >&2
+if [[ ! -f "$grainlift_driver" ]]; then
+  echo "Grainlift driver was not built at $grainlift_driver" >&2
   exit 2
 fi
 
@@ -140,7 +140,7 @@ if [[ ! -f "$downstream_driver" ]]; then
   exit 2
 fi
 
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/adbc-proxy-validation.XXXXXX")
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/grainlift-validation.XXXXXX")
 server_pid=""
 postgres_data=""
 cleanup() {
@@ -153,7 +153,7 @@ cleanup() {
     pg_ctl -D "$postgres_data" -m immediate -w stop >/dev/null 2>&1 || true
   fi
   if [[ "$status" -ne 0 && -f "$work_dir/server.log" ]]; then
-    echo "Proxy server log (last 240 lines):" >&2
+    echo "Grainlift server log (last 240 lines):" >&2
     tail -n 240 "$work_dir/server.log" >&2
   fi
   rm -rf "$work_dir"
@@ -177,7 +177,7 @@ PY
 )
 health_endpoint="http://127.0.0.1:$port"
 endpoint="$health_endpoint"
-config="$work_dir/adbc-proxy.toml"
+config="$work_dir/grainlift.toml"
 iroh_secret="$work_dir/iroh-secret"
 iroh_info="$work_dir/iroh-endpoint.json"
 tls_ca="$work_dir/tls-ca.pem"
@@ -196,7 +196,7 @@ if [[ "$transport" == "mtls" ]]; then
     exit 2
   fi
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-    -subj "/CN=ADBC Proxy Validation CA" \
+    -subj "/CN=Grainlift Validation CA" \
     -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,keyCertSign,cRLSign" \
     -keyout "$tls_ca_key" -out "$tls_ca" >/dev/null 2>&1
@@ -290,8 +290,8 @@ VALIDATION_TOKEN="$token" \
 VALIDATION_TRANSPORT="$transport" \
 VALIDATION_IROH_SECRET="$iroh_secret" \
 VALIDATION_IROH_INFO="$iroh_info" \
-VALIDATION_IROH_MAX_ACTIVE_STREAMS="${ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS:-1024}" \
-VALIDATION_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION="${ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION:-64}" \
+VALIDATION_IROH_MAX_ACTIVE_STREAMS="${GRAINLIFT_IROH_MAX_ACTIVE_STREAMS:-1024}" \
+VALIDATION_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION="${GRAINLIFT_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION:-64}" \
 VALIDATION_TLS_CA="$tls_ca" \
 VALIDATION_TLS_SERVER_CERT="$tls_server_cert" \
 VALIDATION_TLS_SERVER_KEY="$tls_server_key" \
@@ -318,11 +318,11 @@ listen = "127.0.0.1:{os.environ["VALIDATION_PORT"]}"
 session_ttl_seconds = 300
 session_reap_interval_seconds = 5
 require_authentication = {str(authenticated).lower()}
-request_timeout_seconds = {os.environ.get("ADBC_PROXY_VALIDATION_REQUEST_TIMEOUT_SECONDS", "300")}
+request_timeout_seconds = {os.environ.get("GRAINLIFT_VALIDATION_REQUEST_TIMEOUT_SECONDS", "300")}
 '''
-if value := os.environ.get("ADBC_PROXY_SERVER_MAX_BIND_BYTES", os.environ.get("ADBC_PROXY_MAX_BIND_BYTES")):
+if value := os.environ.get("GRAINLIFT_SERVER_MAX_BIND_BYTES", os.environ.get("GRAINLIFT_MAX_BIND_BYTES")):
     contents += f'max_bind_bytes = {int(value)}\n'
-if value := os.environ.get("ADBC_PROXY_VALIDATION_MAX_REQUEST_BODY_BYTES"):
+if value := os.environ.get("GRAINLIFT_VALIDATION_MAX_REQUEST_BODY_BYTES"):
     contents += f'max_request_body_bytes = {int(value)}\n'
 if os.environ["VALIDATION_MODE"] == "load":
     contents += '''max_sessions = 2048
@@ -427,8 +427,8 @@ Path(os.environ["VALIDATION_CONFIG"]).write_text(contents)
 PY
 
 OTEL_SDK_DISABLED=true \
-RUST_LOG="${RUST_LOG:-adbc_proxy_server=info}" \
-"$repo_root/target/release/adbc-proxy-server" --config "$config" \
+RUST_LOG="${RUST_LOG:-grainlift_server=info}" \
+"$repo_root/target/release/grainlift-server" --config "$config" \
   >"$work_dir/server.log" 2>&1 &
 server_pid=$!
 
@@ -444,7 +444,7 @@ for _ in {1..100}; do
   sleep 0.1
 done
 if [[ "$ready" != "1" ]]; then
-  echo "Proxy server did not become ready" >&2
+  echo "Grainlift server did not become ready" >&2
   sed -n '1,240p' "$work_dir/server.log" >&2
   exit 1
 fi
@@ -460,10 +460,10 @@ case "$transport" in
   mtls)
     endpoint="tls+tcp://127.0.0.1:$tcp_port"
     token=""
-    export ADBC_PROXY_TLS_CA="$tls_ca"
-    export ADBC_PROXY_TLS_CERT="$tls_client_cert"
-    export ADBC_PROXY_TLS_KEY="$tls_client_key"
-    export ADBC_PROXY_TLS_SERVER_NAME="localhost"
+    export GRAINLIFT_TLS_CA="$tls_ca"
+    export GRAINLIFT_TLS_CERT="$tls_client_cert"
+    export GRAINLIFT_TLS_KEY="$tls_client_key"
+    export GRAINLIFT_TLS_SERVER_NAME="localhost"
     ;;
   iroh)
     for _ in {1..100}; do
@@ -471,7 +471,7 @@ case "$transport" in
       sleep 0.1
     done
     if [[ ! -s "$iroh_info" ]]; then
-      echo "Proxy did not publish Iroh endpoint information" >&2
+      echo "Grainlift did not publish Iroh endpoint information" >&2
       sed -n '1,240p' "$work_dir/server.log" >&2
       exit 1
     fi
@@ -491,36 +491,36 @@ if not record["direct_addresses"]:
 print(record["direct_addresses"][0])
 PY
 )
-    export ADBC_PROXY_IROH_DIRECT_ADDRESS="$iroh_direct_address"
+    export GRAINLIFT_IROH_DIRECT_ADDRESS="$iroh_direct_address"
     token=""
     ;;
 esac
 
-export ADBC_PROXY_DRIVER="$proxy_driver"
-export ADBC_PROXY_ENDPOINT="$endpoint"
-export ADBC_PROXY_TOKEN="$token"
-export ADBC_PROXY_TARGET="$target"
-export ADBC_PROXY_BACKEND="$backend"
-export ADBC_PROXY_TRANSPORT="$transport"
-export ADBC_PROXY_SERVER_PID="$server_pid"
+export GRAINLIFT_DRIVER="$grainlift_driver"
+export GRAINLIFT_ENDPOINT="$endpoint"
+export GRAINLIFT_TOKEN="$token"
+export GRAINLIFT_TARGET="$target"
+export GRAINLIFT_BACKEND="$backend"
+export GRAINLIFT_TRANSPORT="$transport"
+export GRAINLIFT_SERVER_PID="$server_pid"
 if [[ "$backend" == "sqlite" ]]; then
-  export ADBC_PROXY_DOWNSTREAM_URI="$database_option_value"
+  export GRAINLIFT_DOWNSTREAM_URI="$database_option_value"
 else
-  unset ADBC_PROXY_DOWNSTREAM_URI || true
+  unset GRAINLIFT_DOWNSTREAM_URI || true
 fi
 
 if [[ "$mode" == "serve" ]]; then
-  env_file=${ADBC_PROXY_ENV_FILE:?ADBC_PROXY_ENV_FILE is required in serve mode}
+  env_file=${GRAINLIFT_ENV_FILE:?GRAINLIFT_ENV_FILE is required in serve mode}
   env_file_tmp="$env_file.tmp"
   {
-    printf 'export ADBC_PROXY_DRIVER=%q\n' "$ADBC_PROXY_DRIVER"
-    printf 'export ADBC_PROXY_ENDPOINT=%q\n' "$ADBC_PROXY_ENDPOINT"
-    printf 'export ADBC_PROXY_TOKEN=%q\n' "$ADBC_PROXY_TOKEN"
-    printf 'export ADBC_PROXY_TARGET=%q\n' "$ADBC_PROXY_TARGET"
-    printf 'export ADBC_PROXY_BACKEND=%q\n' "$ADBC_PROXY_BACKEND"
-    printf 'export ADBC_PROXY_TRANSPORT=%q\n' "$ADBC_PROXY_TRANSPORT"
-    if [[ -n "${ADBC_PROXY_DOWNSTREAM_URI:-}" ]]; then
-      printf 'export ADBC_PROXY_DOWNSTREAM_URI=%q\n' "$ADBC_PROXY_DOWNSTREAM_URI"
+    printf 'export GRAINLIFT_DRIVER=%q\n' "$GRAINLIFT_DRIVER"
+    printf 'export GRAINLIFT_ENDPOINT=%q\n' "$GRAINLIFT_ENDPOINT"
+    printf 'export GRAINLIFT_TOKEN=%q\n' "$GRAINLIFT_TOKEN"
+    printf 'export GRAINLIFT_TARGET=%q\n' "$GRAINLIFT_TARGET"
+    printf 'export GRAINLIFT_BACKEND=%q\n' "$GRAINLIFT_BACKEND"
+    printf 'export GRAINLIFT_TRANSPORT=%q\n' "$GRAINLIFT_TRANSPORT"
+    if [[ -n "${GRAINLIFT_DOWNSTREAM_URI:-}" ]]; then
+      printf 'export GRAINLIFT_DOWNSTREAM_URI=%q\n' "$GRAINLIFT_DOWNSTREAM_URI"
     fi
   } >"$env_file_tmp"
   mv "$env_file_tmp" "$env_file"

@@ -68,7 +68,7 @@ authorized principal from using another principal's connection handles.
 The server enforces independent limits on each decoded HTTP request, the
 cumulative native bind stream, request duration, global sessions, sessions per
 principal, and statements and results per session. `server.max_bind_bytes`
-defaults to 64 MiB; the client has a separate `proxy.max_bind_bytes`
+defaults to 64 MiB; the client has a separate `grainlift.max_bind_bytes`
 defence. Bind batches are acknowledged one turn at a time and staged in an
 anonymous file, so raising the cumulative limit does not require buffering the
 whole stream in memory. The HTTP request budget remains a per-batch limit.

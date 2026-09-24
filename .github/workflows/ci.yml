@@ -86,7 +86,7 @@ jobs:
           --health-retries 10
     env:
       ADBC_POSTGRESQL_URI: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-      ADBC_PROXY_TRANSPORT: ${{ matrix.transport }}
+      GRAINLIFT_TRANSPORT: ${{ matrix.transport }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,28 +106,28 @@ jobs:
           drivers: ${{ matrix.driver }}
       - run: cargo build --release --workspace
       - run: >-
-          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh
           smoke ${{ matrix.backend }}
       - name: Concurrent proxy load smoke
         if: matrix.backend == 'sqlite' && matrix.transport == 'mtls'
         run: >-
-          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh
           load sqlite --workers 8 --iterations 5 --warmup 1
           --rows 10000 --query-rows 512 --payload-bytes 32
       - name: Payload budget and HTTP fault smoke
         if: matrix.backend == 'sqlite' && matrix.transport == 'http'
         run: >-
-          ADBC_PROXY_SKIP_BUILD=1
-          ADBC_PROXY_VALIDATION_REQUEST_TIMEOUT_SECONDS=2
+          GRAINLIFT_SKIP_BUILD=1
+          GRAINLIFT_VALIDATION_REQUEST_TIMEOUT_SECONDS=2
           ./validation/run_external.sh large-payload sqlite
           --response-budget-mib 2 --wire-faults --timeout-wait-seconds 3
       - name: Payload budget smoke
         if: matrix.backend == 'sqlite' && matrix.transport != 'http'
         run: >-
-          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh
           large-payload sqlite --response-budget-mib 2
       - run: >-
-          ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh
+          GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh
           foundry ${{ matrix.backend }} -q
           --junitxml=validation/foundry-results.xml
       - name: Upload Foundry results
@@ -180,7 +180,7 @@ jobs:
           --health-retries 20
           --health-start-period 30s
     env:
-      ADBC_PROXY_TRANSPORT: http
+      GRAINLIFT_TRANSPORT: http
       ADBC_MYSQL_URI: mysql://root:root@127.0.0.1:3306/testdb
       ADBC_FLIGHTSQL_URI: grpc://127.0.0.1:31337
       ADBC_FLIGHTSQL_USERNAME: sqlflite_username
@@ -225,5 +225,5 @@ jobs:
       - name: Run real-driver compatibility smoke
         run: |
           for backend in mysql flightsql datafusion trino mssql; do
-            ADBC_PROXY_SKIP_BUILD=1 ./validation/run_external.sh smoke "$backend"
+            GRAINLIFT_SKIP_BUILD=1 ./validation/run_external.sh smoke "$backend"
           done

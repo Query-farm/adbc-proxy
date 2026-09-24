@@ -13,18 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify that a packaged proxy driver is discoverable and initializes."""
+"""Verify that a packaged Grainlift driver is discoverable and initializes."""
 
 import adbc_driver_manager
 
 
 def test_package() -> None:
     database = adbc_driver_manager.AdbcDatabase(
-        driver="proxy",
-        entrypoint="AdbcDriverProxyInit",
+        driver="grainlift",
+        entrypoint="AdbcDriverGrainliftInit",
         **{
-            "proxy.uri": "http://127.0.0.1:1",
-            "proxy.target": "package-load-test",
+            "grainlift.uri": "http://127.0.0.1:1",
+            "grainlift.target": "package-load-test",
         },
     )
     database.close()

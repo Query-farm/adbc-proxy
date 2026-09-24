@@ -16,14 +16,14 @@
 
 set -euo pipefail
 
-if [[ -f .proxy-validation.pid ]]; then
-  runner_pid=$(<.proxy-validation.pid)
+if [[ -f .grainlift-validation.pid ]]; then
+  runner_pid=$(<.grainlift-validation.pid)
   kill "$runner_pid" 2>/dev/null || true
   wait "$runner_pid" 2>/dev/null || true
 fi
-if [[ -f .proxy-validation-container ]]; then
-  container_id=$(<.proxy-validation-container)
+if [[ -f .grainlift-validation-container ]]; then
+  container_id=$(<.grainlift-validation-container)
   docker stop "$container_id" >/dev/null 2>&1 || true
 fi
-rm -f .proxy-validation.pid .env.override
-rm -f .proxy-validation-container
+rm -f .grainlift-validation.pid .env.override
+rm -f .grainlift-validation-container

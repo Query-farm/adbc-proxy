@@ -28,7 +28,7 @@ done
 # The AArch64 blake3 implementation contributes public C symbols to a cdylib.
 # Filter those only from our exported ADBC driver. Rewriting version scripts
 # for dependency dylibs can leave an empty `global` block, which GNU ld rejects.
-if [[ "$output" == */libadbc_driver_proxy.so ]]; then
+if [[ "$output" == */libadbc_driver_grainlift.so ]]; then
   for index in "${!args[@]}"; do
     if [[ "${args[$index]}" == -Wl,--version-script=* ]]; then
       version_script="${args[$index]#*=}"

@@ -24,7 +24,7 @@ domain.
 
 ## Profile
 
-- Run one `adbc-proxy-server` process per driver/tenant failure domain. Do not
+- Run one `grainlift-server` process per driver/tenant failure domain. Do not
   mix an untrusted or historically unstable driver with unrelated tenants in
   the same process.
 - Route a stateful session to its owning process for its lifetime. A process

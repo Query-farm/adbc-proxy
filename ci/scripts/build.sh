@@ -22,11 +22,11 @@ architecture=${3:?expected target architecture}
 
 case "$configuration" in
   test)
-    cargo_args=(build --locked -p adbc-driver-proxy)
+    cargo_args=(build --locked -p adbc-driver-grainlift)
     profile=debug
     ;;
   release)
-    cargo_args=(build --locked --release -p adbc-driver-proxy)
+    cargo_args=(build --locked --release -p adbc-driver-grainlift)
     profile=release
     ;;
   *)
@@ -37,16 +37,16 @@ esac
 
 case "$platform/$architecture" in
   linux/amd64|linux/arm64)
-    source_name=libadbc_driver_proxy.so
-    output_name=libadbc_driver_proxy.so
+    source_name=libadbc_driver_grainlift.so
+    output_name=libadbc_driver_grainlift.so
     ;;
   macos/amd64|macos/arm64)
-    source_name=libadbc_driver_proxy.dylib
-    output_name=libadbc_driver_proxy.dylib
+    source_name=libadbc_driver_grainlift.dylib
+    output_name=libadbc_driver_grainlift.dylib
     ;;
   windows/amd64)
-    source_name=adbc_driver_proxy.dll
-    output_name=libadbc_driver_proxy.dll
+    source_name=adbc_driver_grainlift.dll
+    output_name=libadbc_driver_grainlift.dll
     ;;
   *)
     echo "Unsupported build target: $platform/$architecture" >&2

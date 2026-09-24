@@ -30,7 +30,7 @@ from adbc_drivers_validation.tests.conftest import (  # noqa: F401
     pytest_collection_modifyitems,
 )
 
-from .proxy import get_quirks
+from .grainlift import get_quirks
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -47,4 +47,4 @@ def driver(request: pytest.FixtureRequest, pytestconfig: pytest.Config):
 
 @pytest.fixture(scope="session")
 def driver_path() -> str:
-    return os.environ["ADBC_PROXY_DRIVER"]
+    return os.environ["GRAINLIFT_DRIVER"]

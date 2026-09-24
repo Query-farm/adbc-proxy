@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-driver = "proxy"
+driver = "grainlift"
 
 [lang]
 lang = "script"

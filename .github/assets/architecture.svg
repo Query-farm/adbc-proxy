@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
-  <title id="title">ADBC Proxy architecture</title>
+  <title id="title">Grainlift architecture</title>
   <desc id="desc">An ADBC application loads the client-side proxy driver, communicates over VGI-RPC using HTTP, TCP with mutual TLS, or Iroh, and reaches the stateful proxy service. The service authenticates and authorizes the caller, owns ADBC connection state, and uses the server-side driver manager to connect to SQLite, DuckDB, PostgreSQL, or another configured ADBC driver.</desc>
 
   <style>
@@ -71,8 +71,8 @@
   <rect class="box-blue" x="70" y="305" width="190" height="135" rx="12" stroke-width="2"/>
   <circle cx="96" cy="333" r="14" fill="#00a4e4"/>
   <text x="96" y="338" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#ffffff">2</text>
-  <text class="label" x="165" y="339" text-anchor="middle">Proxy driver</text>
-  <text class="mono" x="165" y="369" text-anchor="middle">libadbc_driver_proxy</text>
+  <text class="label" x="165" y="339" text-anchor="middle">Grainlift driver</text>
+  <text class="mono" x="165" y="369" text-anchor="middle">libadbc_driver_grainlift</text>
   <line class="divider" x1="92" y1="388" x2="238" y2="388"/>
   <text class="small" x="165" y="413" text-anchor="middle">ADBC 1.1 · Arrow streams</text>
 
@@ -100,16 +100,16 @@
   <path class="flow" d="M 290 318 L 350 318" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
   <path class="flow" d="M 570 318 L 630 318" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
 
-  <!-- Proxy service host -->
+  <!-- Grainlift service host -->
   <g filter="url(#shadow)">
     <rect class="panel" x="630" y="75" width="530" height="485" rx="18" stroke-width="2"/>
   </g>
-  <text class="panel-title" x="895" y="108" text-anchor="middle">PROXY SERVICE HOST</text>
+  <text class="panel-title" x="895" y="108" text-anchor="middle">GRAINLIFT SERVICE HOST</text>
 
   <rect class="box-green" x="665" y="130" width="460" height="90" rx="12" stroke-width="2"/>
   <circle cx="694" cy="158" r="14" fill="#5d8467"/>
   <text x="694" y="163" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#ffffff">3</text>
-  <text class="label" x="895" y="163" text-anchor="middle">Authenticated proxy service</text>
+  <text class="label" x="895" y="163" text-anchor="middle">Authenticated Grainlift service</text>
   <text class="body" x="895" y="190" text-anchor="middle">identity · target policy · quotas · OpenTelemetry</text>
 
   <path class="inner-flow" d="M 895 220 L 895 246" marker-end="url(#inner-arrow)"/>

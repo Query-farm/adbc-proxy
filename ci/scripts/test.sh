@@ -16,4 +16,4 @@
 
 set -euo pipefail
 
-cargo test --locked -p adbc-driver-proxy -p adbc-proxy-protocol
+cargo test --locked -p adbc-driver-grainlift -p grainlift-protocol

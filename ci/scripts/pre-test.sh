@@ -35,7 +35,7 @@ case "$service_name" in
     ;;
   postgresql)
     driver="postgresql=1.12.0"
-    container_name="adbc-proxy-foundry-${GITHUB_RUN_ID:-$$}"
+    container_name="grainlift-foundry-${GITHUB_RUN_ID:-$$}"
     container_id=$(docker run --detach --rm \
       --name "$container_name" \
       --env POSTGRES_DB=postgres \
@@ -43,7 +43,7 @@ case "$service_name" in
       --env POSTGRES_USER=postgres \
       --publish 127.0.0.1::5432 \
       postgres:14)
-    printf '%s\n' "$container_id" >.proxy-validation-container
+    printf '%s\n' "$container_id" >.grainlift-validation-container
     for _ in {1..60}; do
       if docker exec "$container_id" pg_isready --username postgres >/dev/null 2>&1; then
         break
@@ -64,12 +64,12 @@ dbc install "$driver" --level user
 
 cargo build --locked --release --workspace
 
-ADBC_PROXY_SKIP_BUILD=1 \
-  ADBC_PROXY_BACKEND="$service_name" \
-  ADBC_PROXY_ENV_FILE="$PWD/.env.override" \
+GRAINLIFT_SKIP_BUILD=1 \
+  GRAINLIFT_BACKEND="$service_name" \
+  GRAINLIFT_ENV_FILE="$PWD/.env.override" \
   ./validation/run_external.sh serve "$service_name" &
 runner_pid=$!
-printf '%s\n' "$runner_pid" >.proxy-validation.pid
+printf '%s\n' "$runner_pid" >.grainlift-validation.pid
 
 for _ in {1..300}; do
   if [[ -s .env.override ]]; then
@@ -81,5 +81,5 @@ for _ in {1..300}; do
   sleep 0.1
 done
 
-echo "Proxy validation service did not publish its environment" >&2
+echo "Grainlift validation service did not publish its environment" >&2
 exit 1

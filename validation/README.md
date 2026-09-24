@@ -22,9 +22,9 @@ the Rust proxy types in-process:
 
 ```text
 Python ADBC driver manager
-  -> libadbc_driver_proxy (exported C ABI)
+  -> libadbc_driver_grainlift (exported C ABI)
   -> VGI RPC over HTTP, TCP, mTLS TCP, or raw Iroh
-  -> adbc-proxy-server
+  -> grainlift-server
   -> dynamically loaded ADBC driver
   -> downstream database
 ```
@@ -69,14 +69,14 @@ Run the deterministic external smoke test:
 ./validation/run_external.sh smoke mssql
 ```
 
-Select a non-HTTP transport with `ADBC_PROXY_TRANSPORT=tcp`, `mtls`, or
+Select a non-HTTP transport with `GRAINLIFT_TRANSPORT=tcp`, `mtls`, or
 `iroh`. The harness generates short-lived test certificates for mTLS. For
 example:
 
 ```sh
-ADBC_PROXY_TRANSPORT=tcp ./validation/run_external.sh foundry sqlite -q
-ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
-ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh foundry sqlite -q
+GRAINLIFT_TRANSPORT=tcp ./validation/run_external.sh foundry sqlite -q
+GRAINLIFT_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
+GRAINLIFT_TRANSPORT=iroh ./validation/run_external.sh foundry sqlite -q
 ```
 
 Run the official ADBC Driver Foundry connection, query, and statement tests:
@@ -90,12 +90,12 @@ Run the official ADBC Driver Foundry connection, query, and statement tests:
 Run concurrent end-to-end load through the exported C ABI:
 
 ```sh
-ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh load duckdb \
+GRAINLIFT_TRANSPORT=mtls ./validation/run_external.sh load duckdb \
   --workers 32 --iterations 50 --rows 200000 \
   --query-rows 2048 --payload-bytes 128 \
   --json-output validation/load-results/duckdb-mtls.json
 
-ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load postgresql \
+GRAINLIFT_TRANSPORT=iroh ./validation/run_external.sh load postgresql \
   --workers 32 --duration-seconds 60 --rows 200000
 ```
 
@@ -103,7 +103,7 @@ Exercise payload budgets and recovery with a CI-sized response limit:
 
 ```sh
 ./validation/run_external.sh large-payload sqlite --response-budget-mib 2
-ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh large-payload sqlite \
+GRAINLIFT_TRANSPORT=iroh ./validation/run_external.sh large-payload sqlite \
   --response-budget-mib 2
 ```
 
@@ -112,12 +112,12 @@ Use `--heavy` for real near-64 MiB bind and bind-stream probes, or
 following environment variables test non-default and deliberately mismatched
 client/server policy:
 
-- `ADBC_PROXY_MAX_BIND_BYTES`
-- `ADBC_PROXY_SERVER_MAX_BIND_BYTES`
-- `ADBC_PROXY_VALIDATION_MAX_REQUEST_BODY_BYTES`
-- `ADBC_PROXY_VALIDATION_REQUEST_TIMEOUT_SECONDS`
-- `ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS`
-- `ADBC_PROXY_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION`
+- `GRAINLIFT_MAX_BIND_BYTES`
+- `GRAINLIFT_SERVER_MAX_BIND_BYTES`
+- `GRAINLIFT_VALIDATION_MAX_REQUEST_BODY_BYTES`
+- `GRAINLIFT_VALIDATION_REQUEST_TIMEOUT_SECONDS`
+- `GRAINLIFT_IROH_MAX_ACTIVE_STREAMS`
+- `GRAINLIFT_IROH_MAX_ACTIVE_STREAMS_PER_CONNECTION`
 
 For Iroh load profiles, allow at least one control stream per session plus one
 stream per concurrent result or bind exchange.
@@ -140,7 +140,7 @@ Additional pytest arguments are forwarded, for example:
   -k 'test_get_statistics or test_execute_schema'
 ```
 
-Set `ADBC_PROXY_SKIP_BUILD=1` to reuse release artifacts produced by a prior CI
+Set `GRAINLIFT_SKIP_BUILD=1` to reuse release artifacts produced by a prior CI
 build step. Every run uses isolated downstream state and dynamically selected
 loopback ports. HTTP uses a static token, mTLS uses a generated SPIFFE client
 identity, and raw Iroh uses a generated endpoint key; plaintext TCP is limited

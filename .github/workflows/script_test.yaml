@@ -180,7 +180,7 @@ jobs:
 
 
   validate:
-    name: "Validate proxy ${{ matrix.vendor_version }}/${{ matrix.platform }}_${{ matrix.arch }}"
+    name: "Validate grainlift ${{ matrix.vendor_version }}/${{ matrix.platform }}_${{ matrix.arch }}"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: true
@@ -332,11 +332,11 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: docs-${{ matrix.vendor_version }}
-          path: "./generated/proxy.md"
+          path: "./generated/grainlift.md"
           retention-days: 7
 
   build:
-    name: "Build proxy/${{ matrix.platform }}_${{ matrix.arch }}"
+    name: "Build grainlift/${{ matrix.platform }}_${{ matrix.arch }}"
     needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -414,7 +414,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: drivers-${{ matrix.platform }}-${{ matrix.arch }}
-          path: "./build/libadbc_driver_proxy.*"
+          path: "./build/libadbc_driver_grainlift.*"
           retention-days: 2
 
   package:
@@ -459,7 +459,7 @@ jobs:
           pixi install
 
           pixi run adbc-gen-package \
-            --name proxy \
+            --name grainlift \
             --root $(pwd) \
             --manifest-template $(pwd)/manifest.toml \
              \
@@ -491,7 +491,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: docs
-          path: "./generated/proxy.md"
+          path: "./generated/grainlift.md"
           retention-days: 2
 
   test-packages:

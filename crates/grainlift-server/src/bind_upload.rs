@@ -44,7 +44,7 @@ impl BindUpload {
     pub fn start(schema: SchemaRef, max_bytes: usize) -> Result<Self, AdbcError> {
         let (tx, rx) = mpsc::sync_channel(1);
         thread::Builder::new()
-            .name("adbc-proxy-bind-upload".to_string())
+            .name("grainlift-bind-upload".to_string())
             .spawn(move || run(rx, schema, max_bytes))
             .map_err(|error| io_error(format!("start bind upload worker: {error}")))?;
         Ok(Self { tx })

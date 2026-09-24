@@ -19,7 +19,7 @@ import adbc_drivers_validation.tests.ingest
 import pytest
 from adbc_drivers_validation.tests.ingest import TestIngest as BaseTestIngest
 
-from .proxy import get_quirks
+from .grainlift import get_quirks
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
@@ -36,9 +36,9 @@ class TestIngest(BaseTestIngest):
         if driver.name not in affected:
             return
         statuses = {
-            "proxy-sqlite": "INTERNAL",
-            "proxy-duckdb": "INTERNAL",
-            "proxy-postgresql": "INVALID_ARGUMENT",
+            "grainlift-sqlite": "INTERNAL",
+            "grainlift-duckdb": "INTERNAL",
+            "grainlift-postgresql": "INVALID_ARGUMENT",
         }
         pytest.xfail(
             f"the downstream {driver.vendor_name} driver reports "
@@ -48,23 +48,23 @@ class TestIngest(BaseTestIngest):
     def test_append_schema_mismatch(self, driver, conn, query) -> None:
         self._xfail_status(
             driver,
-            {"proxy-sqlite", "proxy-duckdb", "proxy-postgresql"},
+            {"grainlift-sqlite", "grainlift-duckdb", "grainlift-postgresql"},
         )
         return super().test_append_schema_mismatch(driver, conn, query)
 
     def test_create_conflict(self, driver, conn, query) -> None:
-        self._xfail_status(driver, {"proxy-sqlite", "proxy-postgresql"})
+        self._xfail_status(driver, {"grainlift-sqlite", "grainlift-postgresql"})
         return super().test_create_conflict(driver, conn, query)
 
     def test_createappend_schema_mismatch(self, driver, conn, query) -> None:
         self._xfail_status(
             driver,
-            {"proxy-sqlite", "proxy-duckdb", "proxy-postgresql"},
+            {"grainlift-sqlite", "grainlift-duckdb", "grainlift-postgresql"},
         )
         return super().test_createappend_schema_mismatch(driver, conn, query)
 
     def test_ingest_no_parameters(self, driver, conn) -> None:
-        if driver.name == "proxy-duckdb":
+        if driver.name == "grainlift-duckdb":
             pytest.xfail(
                 "the downstream DuckDB driver treats an unbound ingest as a no-op"
             )

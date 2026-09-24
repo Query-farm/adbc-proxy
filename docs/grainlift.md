@@ -20,11 +20,11 @@
 -->
 
 {{ cross_reference|safe }}
-# ADBC Proxy Driver {{ version }}
+# Grainlift ADBC Driver {{ version }}
 
 {{ heading|safe }}
 
-ADBC Proxy is a client-side ADBC driver that connects to the ADBC Proxy
+Grainlift is a client-side ADBC driver that connects to the Grainlift
 service. The service owns the downstream ADBC driver and its stateful database,
 connection, statement, transaction, and result-stream objects.
 
@@ -34,25 +34,25 @@ Once released through the ADBC Driver Foundry, install the client driver with
 [`dbc`](https://docs.columnar.tech/dbc/):
 
 ```console
-dbc install proxy
+dbc install grainlift
 ```
 
-The proxy service is deployed separately. It must have the desired downstream
+The Grainlift service is deployed separately. It must have the desired downstream
 ADBC drivers installed and configured as authorized targets.
 
 ## Connecting
 
-Supply the proxy endpoint and server-configured target as database options:
+Supply the Grainlift endpoint and server-configured target as database options:
 
 ```python
 from adbc_driver_manager import dbapi
 
 with dbapi.connect(
-    driver="proxy",
+    driver="grainlift",
     db_kwargs={
-        "proxy.uri": "https://proxy.example.com",
-        "proxy.target": "analytics",
-        "proxy.auth.bearer_token": "TOKEN",
+        "grainlift.uri": "grainlift://grainlift.example.com",
+        "grainlift.target": "analytics",
+        "grainlift.auth.bearer_token": "TOKEN",
     },
 ) as connection:
     with connection.cursor() as cursor:
@@ -60,7 +60,7 @@ with dbapi.connect(
         print(cursor.fetch_arrow_table())
 ```
 
-Capabilities and type behavior depend on both the proxy and the selected
+Capabilities and type behavior depend on both Grainlift and the selected
 downstream driver. The tables below show the downstream configurations covered
 by the Foundry validation suite.
 
@@ -79,4 +79,4 @@ by the Foundry validation suite.
 {{ compatibility_info|safe }}
 
 For deployment, authentication, transport, and option details, see the
-[project README](https://github.com/Query-farm/adbc-proxy).
+[project README](https://github.com/Query-farm/grainlift).

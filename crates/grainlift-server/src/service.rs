@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use adbc_core::error::Error as AdbcError;
 use adbc_core::options::{InfoCode, ObjectDepth, OptionValue};
-use adbc_proxy_protocol as protocol;
 use arrow_array::{BinaryArray, BooleanArray, Int64Array, RecordBatch, StringArray};
+use grainlift_protocol as protocol;
 use serde::{Deserialize, Serialize};
 use vgi_rpc::server::{MethodInfo, MethodType, RpcServer, StateDecoder};
 use vgi_rpc::stream::{
@@ -146,7 +146,7 @@ pub fn build_server_with_max_bind(
     max_bind_bytes: usize,
 ) -> RpcServer {
     let hook = vgi_rpc::OtelHook::new(vgi_rpc::OtelConfig {
-        service_name: "adbc-proxy".to_string(),
+        service_name: "grainlift".to_string(),
         record_exceptions: false,
     });
     let mut server = RpcServer::builder()

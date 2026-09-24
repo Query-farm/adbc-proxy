@@ -1,4 +1,4 @@
-ADBC Proxy
+Grainlift
 Copyright 2026 Query Farm LLC - https://query.farm
 
 Licensed under the Apache License, Version 2.0 (the "License");

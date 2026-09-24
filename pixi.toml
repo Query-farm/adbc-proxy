@@ -18,7 +18,7 @@
 [workspace]
 authors = ["ADBC Drivers Contributors"]
 channels = ["conda-forge"]
-name = "adbc-driver-proxy"
+name = "adbc-driver-grainlift"
 platforms = ["linux-64", "osx-arm64", "win-64", "linux-aarch64"]
 version = "0.1.0"
 

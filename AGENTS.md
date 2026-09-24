@@ -21,12 +21,12 @@
 
 This repository implements an ADBC proxy as two cooperating products:
 
-- `adbc-driver-proxy` is an ordinary ADBC 1.1 driver loaded by client
+- `adbc-driver-grainlift` is an ordinary ADBC 1.1 driver loaded by client
   applications.
-- `adbc-proxy-server` owns the real downstream ADBC drivers and preserves
+- `grainlift-server` owns the real downstream ADBC drivers and preserves
   database, connection, transaction, statement, and Arrow result state.
 
-The wire contract is in `adbc-proxy-protocol` and is carried by VGI-RPC over
+The wire contract is in `grainlift-protocol` and is carried by VGI-RPC over
 HTTP(S), TCP, mutual-TLS TCP, or raw Iroh QUIC streams.
 
 ## Non-negotiable invariants
@@ -58,12 +58,12 @@ HTTP(S), TCP, mutual-TLS TCP, or raw Iroh QUIC streams.
 
 ## Repository map
 
-- `crates/adbc-proxy-protocol`: method constants, Arrow wire schemas, typed
+- `crates/grainlift-protocol`: method constants, Arrow wire schemas, typed
   options, and structured errors.
-- `crates/adbc-proxy-server`: configuration, authentication/authorization,
+- `crates/grainlift-server`: configuration, authentication/authorization,
   session ownership, downstream driver loading, transport listeners, and
   telemetry.
-- `crates/adbc-driver-proxy`: exported ADBC C ABI and transport clients.
+- `crates/adbc-driver-grainlift`: exported ADBC C ABI and transport clients.
 - `validation`: Python C-ABI smoke, Driver Foundry conformance, load harness,
   and reproducible results.
 - `docs`: operator-facing security and process-isolation guidance.
@@ -96,8 +96,8 @@ manager. It requires installed downstream drivers and may require PostgreSQL:
 
 ```console
 ./validation/run_external.sh smoke sqlite
-ADBC_PROXY_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
-ADBC_PROXY_TRANSPORT=iroh ./validation/run_external.sh load duckdb \
+GRAINLIFT_TRANSPORT=mtls ./validation/run_external.sh foundry sqlite -q
+GRAINLIFT_TRANSPORT=iroh ./validation/run_external.sh load duckdb \
   --workers 32 --iterations 50
 ```
 

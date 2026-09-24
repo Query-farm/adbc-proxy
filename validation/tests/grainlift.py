@@ -25,10 +25,10 @@ from pathlib import Path
 from adbc_drivers_validation import model, quirks
 
 
-class ProxySqliteQuirks(model.DriverQuirks):
-    name = "proxy-sqlite"
-    driver = "adbc_driver_proxy"
-    driver_name = "ADBC Proxy Driver"
+class GrainliftSqliteQuirks(model.DriverQuirks):
+    name = "grainlift-sqlite"
+    driver = "adbc_driver_grainlift"
+    driver_name = "Grainlift ADBC Driver"
     vendor_name = "SQLite"
     vendor_version = re.compile(r"3\..*")
     short_version = "3.53"
@@ -49,22 +49,22 @@ class ProxySqliteQuirks(model.DriverQuirks):
         current_schema="",
     )
     _database_options = {
-        "proxy.uri": model.FromEnv("ADBC_PROXY_ENDPOINT"),
-        "proxy.target": model.FromEnv("ADBC_PROXY_TARGET"),
+        "grainlift.uri": model.FromEnv("GRAINLIFT_ENDPOINT"),
+        "grainlift.target": model.FromEnv("GRAINLIFT_TARGET"),
     }
-    if os.environ.get("ADBC_PROXY_TOKEN"):
-        _database_options["proxy.auth.bearer_token"] = model.FromEnv("ADBC_PROXY_TOKEN")
-    if os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
-        _database_options["uri"] = model.FromEnv("ADBC_PROXY_DOWNSTREAM_URI")
-    if os.environ.get("ADBC_PROXY_IROH_DIRECT_ADDRESS"):
-        _database_options["proxy.iroh.direct_address"] = model.FromEnv(
-            "ADBC_PROXY_IROH_DIRECT_ADDRESS"
+    if os.environ.get("GRAINLIFT_TOKEN"):
+        _database_options["grainlift.auth.bearer_token"] = model.FromEnv("GRAINLIFT_TOKEN")
+    if os.environ.get("GRAINLIFT_DOWNSTREAM_URI"):
+        _database_options["uri"] = model.FromEnv("GRAINLIFT_DOWNSTREAM_URI")
+    if os.environ.get("GRAINLIFT_IROH_DIRECT_ADDRESS"):
+        _database_options["grainlift.iroh.direct_address"] = model.FromEnv(
+            "GRAINLIFT_IROH_DIRECT_ADDRESS"
         )
     for environment, option in {
-        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
+        "GRAINLIFT_TLS_CA": "grainlift.tls.ca",
+        "GRAINLIFT_TLS_CERT": "grainlift.tls.cert",
+        "GRAINLIFT_TLS_KEY": "grainlift.tls.key",
+        "GRAINLIFT_TLS_SERVER_NAME": "grainlift.tls.server_name",
     }.items():
         if os.environ.get(environment):
             _database_options[option] = model.FromEnv(environment)
@@ -120,10 +120,10 @@ class ProxySqliteQuirks(model.DriverQuirks):
         return quirks.split_statement(statement, dialect="sqlite")
 
 
-class ProxyDuckdbQuirks(model.DriverQuirks):
-    name = "proxy-duckdb"
-    driver = "adbc_driver_proxy"
-    driver_name = "ADBC Proxy Driver"
+class GrainliftDuckdbQuirks(model.DriverQuirks):
+    name = "grainlift-duckdb"
+    driver = "adbc_driver_grainlift"
+    driver_name = "Grainlift ADBC Driver"
     vendor_name = "duckdb"
     vendor_version = re.compile(r"v1\.5\..*")
     short_version = "1.5"
@@ -144,7 +144,7 @@ class ProxyDuckdbQuirks(model.DriverQuirks):
         current_catalog="validation",
         current_schema="main",
     )
-    setup = ProxySqliteQuirks.setup
+    setup = GrainliftSqliteQuirks.setup
 
     @property
     def queries_paths(self) -> tuple[Path]:
@@ -184,10 +184,10 @@ class ProxyDuckdbQuirks(model.DriverQuirks):
         return quirks.split_statement(statement, dialect="duckdb")
 
 
-class ProxyPostgresqlQuirks(model.DriverQuirks):
-    name = "proxy-postgresql"
-    driver = "adbc_driver_proxy"
-    driver_name = "ADBC Proxy Driver"
+class GrainliftPostgresqlQuirks(model.DriverQuirks):
+    name = "grainlift-postgresql"
+    driver = "adbc_driver_grainlift"
+    driver_name = "Grainlift ADBC Driver"
     vendor_name = "PostgreSQL"
     vendor_version = re.compile(r"14.*")
     short_version = "14"
@@ -208,7 +208,7 @@ class ProxyPostgresqlQuirks(model.DriverQuirks):
         current_catalog="postgres",
         current_schema="public",
     )
-    setup = ProxySqliteQuirks.setup
+    setup = GrainliftSqliteQuirks.setup
 
     @property
     def queries_paths(self) -> tuple[Path]:
@@ -301,16 +301,16 @@ def get_quirks(
 ) -> model.DriverQuirks:
     del version
     backend = (
-        vendor.removeprefix("proxy-")
+        vendor.removeprefix("grainlift-")
         if vendor is not None
-        else os.environ.get("ADBC_PROXY_BACKEND", "sqlite")
+        else os.environ.get("GRAINLIFT_BACKEND", "sqlite")
     )
     classes = {
-        "sqlite": ProxySqliteQuirks,
-        "duckdb": ProxyDuckdbQuirks,
-        "postgresql": ProxyPostgresqlQuirks,
+        "sqlite": GrainliftSqliteQuirks,
+        "duckdb": GrainliftDuckdbQuirks,
+        "postgresql": GrainliftPostgresqlQuirks,
     }
     try:
         return classes[backend]()
     except KeyError as error:
-        raise RuntimeError(f"unsupported ADBC_PROXY_BACKEND: {backend}") from error
+        raise RuntimeError(f"unsupported GRAINLIFT_BACKEND: {backend}") from error

@@ -26,17 +26,17 @@ use adbc_core::options::{
 use adbc_core::{
     CancelHandle, Connection, Database, Driver, Optionable, PartitionedResult, Statement,
 };
-use adbc_driver_proxy::{
-    OPTION_BEARER_TOKEN, OPTION_IROH_DIRECT_ADDRESS, OPTION_TARGET, OPTION_TLS_CA, OPTION_TLS_CERT,
-    OPTION_TLS_KEY, OPTION_TLS_SERVER_NAME, ProxyConnection, ProxyDriver,
+use adbc_driver_grainlift::{
+    GrainliftConnection, GrainliftDriver, OPTION_BEARER_TOKEN, OPTION_IROH_DIRECT_ADDRESS,
+    OPTION_TARGET, OPTION_TLS_CA, OPTION_TLS_CERT, OPTION_TLS_KEY, OPTION_TLS_SERVER_NAME,
 };
-use adbc_proxy_protocol::{WireOption, WireOptionValue};
-use adbc_proxy_server::backend::{Backend, BackendConnection, BackendStatement};
-use adbc_proxy_server::config::TargetConfig;
-use adbc_proxy_server::service::build_server;
-use adbc_proxy_server::session::SessionManager;
 use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator, RecordBatchReader, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema};
+use grainlift_protocol::{WireOption, WireOptionValue};
+use grainlift_server::backend::{Backend, BackendConnection, BackendStatement};
+use grainlift_server::config::TargetConfig;
+use grainlift_server::service::build_server;
+use grainlift_server::session::SessionManager;
 use vgi_rpc::AuthContext;
 use vgi_rpc::auth::bearer::bearer_authenticate_static;
 use vgi_rpc::http::HttpState;
@@ -336,7 +336,7 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
 
     let endpoint = format!("http://{address}");
     let values = tokio::task::spawn_blocking(move || -> AdbcResult<(Vec<i64>, Option<i64>)> {
-        let mut driver = ProxyDriver;
+        let mut driver = GrainliftDriver;
         let database = driver.new_database_with_opts([
             (OptionDatabase::Uri, endpoint.into()),
             (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
@@ -542,7 +542,7 @@ async fn authentication_is_required() {
 
     let endpoint = format!("http://{address}");
     let error = tokio::task::spawn_blocking(move || {
-        let mut driver = ProxyDriver;
+        let mut driver = GrainliftDriver;
         let database = driver
             .new_database_with_opts([
                 (OptionDatabase::Uri, endpoint.into()),
@@ -587,7 +587,7 @@ fn query_values(
         (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
     ];
     options.extend(extra_options);
-    let mut driver = ProxyDriver;
+    let mut driver = GrainliftDriver;
     let database = driver.new_database_with_opts(options)?;
     let mut connection = database.new_connection()?;
     let mut statement = connection.new_statement()?;
@@ -795,7 +795,7 @@ async fn ordinary_adbc_client_reads_multiple_batches_over_raw_iroh() {
     });
 
     let value_sets = tokio::task::spawn_blocking(move || -> AdbcResult<Vec<Vec<i64>>> {
-        let mut driver = ProxyDriver;
+        let mut driver = GrainliftDriver;
         let database = driver.new_database_with_opts([
             (OptionDatabase::Uri, format!("iroh://{endpoint_id}").into()),
             (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
@@ -808,7 +808,7 @@ async fn ordinary_adbc_client_reads_multiple_batches_over_raw_iroh() {
         // independent VGI streams while sharing one authenticated QUIC link.
         let mut first = database.new_connection()?;
         let mut second = database.new_connection()?;
-        fn read(connection: &mut ProxyConnection) -> AdbcResult<Vec<i64>> {
+        fn read(connection: &mut GrainliftConnection) -> AdbcResult<Vec<i64>> {
             let mut statement = connection.new_statement()?;
             statement.set_sql_query("select value from test")?;
             let mut values = Vec::new();

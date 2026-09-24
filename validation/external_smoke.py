@@ -40,11 +40,11 @@ def read_all(statement: adbc_driver_manager.AdbcStatement) -> pyarrow.Table:
 
 
 def main() -> None:
-    proxy_driver = Path(require_env("ADBC_PROXY_DRIVER")).resolve(strict=True)
-    endpoint = require_env("ADBC_PROXY_ENDPOINT")
-    token = os.environ.get("ADBC_PROXY_TOKEN", "")
-    target = os.environ.get("ADBC_PROXY_TARGET", "sqlite")
-    backend = os.environ.get("ADBC_PROXY_BACKEND", target)
+    grainlift_driver = Path(require_env("GRAINLIFT_DRIVER")).resolve(strict=True)
+    endpoint = require_env("GRAINLIFT_ENDPOINT")
+    token = os.environ.get("GRAINLIFT_TOKEN", "")
+    target = os.environ.get("GRAINLIFT_TARGET", "sqlite")
+    backend = os.environ.get("GRAINLIFT_BACKEND", target)
     if backend not in {
         "sqlite",
         "duckdb",
@@ -62,13 +62,13 @@ def main() -> None:
 
     if token:
         rejected_options = {
-            "driver": str(proxy_driver),
-            "entrypoint": "AdbcDriverProxyInit",
-            "proxy.uri": endpoint,
-            "proxy.target": target,
-            "proxy.auth.bearer_token": f"{token}-invalid",
+            "driver": str(grainlift_driver),
+            "entrypoint": "AdbcDriverGrainliftInit",
+            "grainlift.uri": endpoint,
+            "grainlift.target": target,
+            "grainlift.auth.bearer_token": f"{token}-invalid",
         }
-        if downstream_uri := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+        if downstream_uri := os.environ.get("GRAINLIFT_DOWNSTREAM_URI"):
             rejected_options["uri"] = downstream_uri
         rejected = adbc_driver_manager.AdbcDatabase(**rejected_options)
         try:
@@ -83,29 +83,29 @@ def main() -> None:
             rejected.close()
 
     options = {
-        "driver": str(proxy_driver),
-        "entrypoint": "AdbcDriverProxyInit",
-        "proxy.uri": endpoint,
-        "proxy.target": target,
+        "driver": str(grainlift_driver),
+        "entrypoint": "AdbcDriverGrainliftInit",
+        "grainlift.uri": endpoint,
+        "grainlift.target": target,
     }
     if token:
-        options["proxy.auth.bearer_token"] = token
-    if downstream_uri := os.environ.get("ADBC_PROXY_DOWNSTREAM_URI"):
+        options["grainlift.auth.bearer_token"] = token
+    if downstream_uri := os.environ.get("GRAINLIFT_DOWNSTREAM_URI"):
         options["uri"] = downstream_uri
-    if direct := os.environ.get("ADBC_PROXY_IROH_DIRECT_ADDRESS"):
-        options["proxy.iroh.direct_address"] = direct
+    if direct := os.environ.get("GRAINLIFT_IROH_DIRECT_ADDRESS"):
+        options["grainlift.iroh.direct_address"] = direct
     tls_options = {
-        "ADBC_PROXY_TLS_CA": "proxy.tls.ca",
-        "ADBC_PROXY_TLS_CERT": "proxy.tls.cert",
-        "ADBC_PROXY_TLS_KEY": "proxy.tls.key",
-        "ADBC_PROXY_TLS_SERVER_NAME": "proxy.tls.server_name",
+        "GRAINLIFT_TLS_CA": "grainlift.tls.ca",
+        "GRAINLIFT_TLS_CERT": "grainlift.tls.cert",
+        "GRAINLIFT_TLS_KEY": "grainlift.tls.key",
+        "GRAINLIFT_TLS_SERVER_NAME": "grainlift.tls.server_name",
     }
     for environment, option in tls_options.items():
         if value := os.environ.get(environment):
             options[option] = value
 
     denied_options = dict(options)
-    denied_options["proxy.validation.disallowed"] = "must-not-reach-driver"
+    denied_options["grainlift.validation.disallowed"] = "must-not-reach-driver"
     denied_database = adbc_driver_manager.AdbcDatabase(**denied_options)
     try:
         try:
@@ -114,7 +114,7 @@ def main() -> None:
             assert (
                 error.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
             )
-            assert "proxy.validation.disallowed" in str(error)
+            assert "grainlift.validation.disallowed" in str(error)
             assert "must-not-reach-driver" not in str(error)
         else:
             denied_connection.close()
@@ -128,14 +128,14 @@ def main() -> None:
         try:
             try:
                 connection.set_options(
-                    **{"proxy.validation.disallowed": "must-not-reach-driver"}
+                    **{"grainlift.validation.disallowed": "must-not-reach-driver"}
                 )
             except adbc_driver_manager.Error as error:
                 assert (
                     error.status_code
                     == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
                 )
-                assert "proxy.validation.disallowed" in str(error)
+                assert "grainlift.validation.disallowed" in str(error)
                 assert "must-not-reach-driver" not in str(error)
             else:
                 raise AssertionError(
@@ -152,7 +152,7 @@ def main() -> None:
 
                     try:
                         statement.set_sql_query(
-                            "SELECT * FROM adbc_proxy_table_that_does_not_exist"
+                            "SELECT * FROM grainlift_table_that_does_not_exist"
                         )
                         read_all(statement)
                     except adbc_driver_manager.Error:
@@ -165,30 +165,30 @@ def main() -> None:
                     statement.close()
                 print(
                     "PASS external ADBC driver-manager -> proxy dylib -> "
-                    f"VGI/{os.environ.get('ADBC_PROXY_TRANSPORT', 'http')} -> "
+                    f"VGI/{os.environ.get('GRAINLIFT_TRANSPORT', 'http')} -> "
                     f"proxy service -> {backend} ADBC"
                 )
                 return
 
             statement = adbc_driver_manager.AdbcStatement(connection)
             try:
-                statement.set_sql_query("DROP TABLE IF EXISTS proxy_validation")
+                statement.set_sql_query("DROP TABLE IF EXISTS grainlift_validation")
                 statement.execute_update()
 
                 statement.set_sql_query(
-                    "CREATE TABLE proxy_validation "
+                    "CREATE TABLE grainlift_validation "
                     f"(id INTEGER NOT NULL, value TEXT, payload {payload_type})"
                 )
                 statement.execute_update()
 
                 statement.set_sql_query(
-                    "INSERT INTO proxy_validation VALUES "
+                    "INSERT INTO grainlift_validation VALUES "
                     "(1, 'alpha', NULL), (2, NULL, NULL), (3, '世界 🚀', NULL)"
                 )
                 assert statement.execute_update() == 3
 
                 statement.set_sql_query(
-                    "SELECT id, value, payload FROM proxy_validation ORDER BY id"
+                    "SELECT id, value, payload FROM grainlift_validation ORDER BY id"
                 )
                 statement.prepare()
                 table = read_all(statement)
@@ -202,13 +202,13 @@ def main() -> None:
                 ]
 
                 statement.set_sql_query(
-                    "SELECT COUNT(*) AS count FROM proxy_validation"
+                    "SELECT COUNT(*) AS count FROM grainlift_validation"
                 )
                 count = read_all(statement)
                 assert count.column("count").to_pylist() == [3]
 
                 statement.set_sql_query(
-                    "INSERT INTO proxy_validation (id, value, payload) "
+                    "INSERT INTO grainlift_validation (id, value, payload) "
                     f"VALUES ({placeholders})"
                 )
                 parameters = pyarrow.record_batch(
@@ -225,22 +225,22 @@ def main() -> None:
 
                 connection.set_autocommit(False)
                 statement.set_sql_query(
-                    "INSERT INTO proxy_validation VALUES (90, 'rollback', NULL)"
+                    "INSERT INTO grainlift_validation VALUES (90, 'rollback', NULL)"
                 )
                 assert statement.execute_update() == 1
                 connection.rollback()
                 statement.set_sql_query(
-                    "SELECT COUNT(*) AS count FROM proxy_validation WHERE id = 90"
+                    "SELECT COUNT(*) AS count FROM grainlift_validation WHERE id = 90"
                 )
                 assert read_all(statement).column("count").to_pylist() == [0]
 
                 statement.set_sql_query(
-                    "INSERT INTO proxy_validation VALUES (91, 'commit', NULL)"
+                    "INSERT INTO grainlift_validation VALUES (91, 'commit', NULL)"
                 )
                 assert statement.execute_update() == 1
                 connection.commit()
                 statement.set_sql_query(
-                    "SELECT COUNT(*) AS count FROM proxy_validation WHERE id = 91"
+                    "SELECT COUNT(*) AS count FROM grainlift_validation WHERE id = 91"
                 )
                 assert read_all(statement).column("count").to_pylist() == [1]
                 # End the read transaction before toggling autocommit.
@@ -268,7 +268,7 @@ def main() -> None:
         database.close()
 
     print(
-        f"PASS external ADBC driver-manager -> proxy dylib -> VGI/{os.environ.get('ADBC_PROXY_TRANSPORT', 'http')} -> "
+        f"PASS external ADBC driver-manager -> proxy dylib -> VGI/{os.environ.get('GRAINLIFT_TRANSPORT', 'http')} -> "
         f"proxy service -> {backend} ADBC"
     )
 

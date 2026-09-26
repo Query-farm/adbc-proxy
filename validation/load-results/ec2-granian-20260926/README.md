@@ -131,6 +131,15 @@ validation entry points. The optional Granian listener test skips when the
 diagnostic dependency is not installed; adapter unit tests still run. No Rust
 source or SDK source was changed, and no local load or build was performed.
 
+The first pushed CI run exposed a pre-existing diagnostic import that the
+standalone public SDK stubs could not resolve (`grainlift.isolation`). The
+optional private timing hook now loads its implementation class at runtime,
+like the other diagnostic host integrations. The exact CI mypy command then
+passed on EC2 across all 33 source files, and the 19 focused tests and relevant
+quality checks passed again. This follow-up does not alter the measured paths:
+host method instrumentation was disabled throughout the comparisons. Original
+measurement source hashes and raw reports are retained unchanged.
+
 ## Reproduction and artifacts
 
 See [the diagnostic instructions](../../diagnostics/README.md#granian-hosting-comparison).

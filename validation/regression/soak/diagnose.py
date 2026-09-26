@@ -60,7 +60,6 @@ from wsgiref.types import StartResponse, WSGIApplication
 
 import psutil
 from grainlift import IsolatedWorker, Limits, Service
-from grainlift.isolation import _ProcessConnection
 
 from . import runner
 from .worker import LoadWorker
@@ -184,7 +183,9 @@ def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, 
     if timings:
         for name in ("open_connection", "execute", "read_result", "next_batch", "_response", "_request"):
             _time_method(Service, name)
-        _time_method(_ProcessConnection, "_exchange")
+        # Optional diagnostic instrumentation uses a private SDK implementation
+        # class; the standalone CI type stubs expose only its public surface.
+        _time_method(importlib.import_module("grainlift.isolation")._ProcessConnection, "_exchange")
     worker = (
         LoadWorker(rows, batch_rows, payload)
         if os.environ.get("GRAINLIFT_DIAGNOSTIC_WORKER", "isolated") == "direct"

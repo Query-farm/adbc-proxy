@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use adbc_core::error::{Error as AdbcError, Status};
 use adbc_core::options::OptionValue;
-use arrow_array::builder::{BinaryBuilder, Int64Builder, StringBuilder};
 use arrow_array::{Array, BinaryArray, Int64Array, RecordBatch, StringArray};
 use arrow_ipc::convert::fb_to_schema;
 use arrow_ipc::root_as_message;
@@ -30,8 +29,11 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod responses;
+pub use responses::*;
+
 pub const PROTOCOL_NAME: &str = "org.queryfarm.Grainlift.v1";
-pub const PROTOCOL_VERSION: &str = "0.2.0";
+pub const PROTOCOL_VERSION: &str = "0.3.0";
 /// Default cumulative native parameter-stream budget.
 pub const MAX_BIND_STREAM_BYTES: usize = 64 * 1024 * 1024;
 /// Current deployed VGI Rust implementation's message compatibility ceiling.
@@ -47,9 +49,6 @@ pub const MAX_CONFIGURABLE_BIND_BYTES: usize = if usize::BITS >= 64 {
 } else {
     usize::MAX
 };
-
-/// Per-turn metadata marking successful end-of-input for a bind exchange.
-pub const BIND_FINISH_METADATA_KEY: &str = "GRAINLIFT:bind_finish";
 
 pub mod method {
     pub const OPEN_CONNECTION: &str = "open_connection";
@@ -104,18 +103,20 @@ pub enum ProtocolError {
     Arrow(#[from] ArrowError),
     #[error("invalid Arrow IPC schema message")]
     InvalidSchemaMessage,
+    #[error("invalid typed wire data: {0}")]
+    InvalidWire(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
-pub enum WireOptionValue {
+pub enum JsonOptionValue {
     String(String),
     Bytes(String),
     Int(i64),
     Double(f64),
 }
 
-impl WireOptionValue {
+impl JsonOptionValue {
     pub fn into_adbc(self) -> Result<OptionValue, ProtocolError> {
         Ok(match self {
             Self::String(value) => OptionValue::String(value),
@@ -135,7 +136,7 @@ impl WireOptionValue {
     }
 }
 
-impl From<&OptionValue> for WireOptionValue {
+impl From<&OptionValue> for JsonOptionValue {
     fn from(value: &OptionValue) -> Self {
         match value {
             OptionValue::String(value) => Self::String(value.clone()),
@@ -153,7 +154,7 @@ impl From<&OptionValue> for WireOptionValue {
 pub struct WireOption {
     pub key: String,
     #[serde(flatten)]
-    pub value: WireOptionValue,
+    pub value: JsonOptionValue,
 }
 
 pub fn encode_options(options: &[WireOption]) -> Result<String, ProtocolError> {
@@ -367,8 +368,8 @@ pub fn statement_binary_schema() -> SchemaRef {
 }
 
 /// Parameters used to initialize a native VGI bind exchange. The schema IPC
-/// descriptor is small control-plane data; record batches travel directly as
-/// exchange turns and are never nested in a `Binary` value.
+/// descriptor is small control-plane data. Each fixed-schema exchange turn
+/// carries one uncompressed IPC batch, or an explicit empty finish marker.
 pub fn bind_init_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("session_id", DataType::Utf8, false),
@@ -392,46 +393,6 @@ pub fn read_result_schema() -> SchemaRef {
     ]))
 }
 
-pub fn execute_response_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("result_id", DataType::Utf8, false),
-        Field::new("rows_affected", DataType::Int64, true),
-        Field::new("schema_ipc", DataType::Binary, false),
-    ]))
-}
-
-pub fn update_response_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![Field::new(
-        "rows_affected",
-        DataType::Int64,
-        true,
-    )]))
-}
-
-pub fn value_response_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![Field::new(
-        "value_json",
-        DataType::Utf8,
-        false,
-    )]))
-}
-
-pub fn schema_response_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![Field::new(
-        "schema_ipc",
-        DataType::Binary,
-        false,
-    )]))
-}
-
-pub fn partitions_response_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("rows_affected", DataType::Int64, false),
-        Field::new("schema_ipc", DataType::Binary, false),
-        Field::new("partitions_json", DataType::Utf8, false),
-    ]))
-}
-
 pub fn one_string(schema: SchemaRef, value: &str) -> Result<RecordBatch, ArrowError> {
     RecordBatch::try_new(
         schema,
@@ -444,21 +405,14 @@ pub fn execute_response(
     rows_affected: Option<i64>,
     schema: &Schema,
 ) -> Result<RecordBatch, ProtocolError> {
-    let schema_ipc = encode_schema(schema)?;
-    let mut ids = StringBuilder::new();
-    ids.append_value(result_id);
-    let mut rows = Int64Builder::new();
-    rows.append_option(rows_affected);
-    let mut schemas = BinaryBuilder::new();
-    schemas.append_value(schema_ipc);
-    Ok(RecordBatch::try_new(
-        execute_response_schema(),
-        vec![
-            Arc::new(ids.finish()),
-            Arc::new(rows.finish()),
-            Arc::new(schemas.finish()),
-        ],
-    )?)
+    encode_response(
+        ExecuteResponse {
+            result_id: result_id.into(),
+            rows_affected,
+            schema_ipc: Bytes(encode_schema(schema)?),
+        },
+        MAX_CONTROL_BYTES,
+    )
 }
 
 pub fn encode_schema(schema: &Schema) -> Result<Vec<u8>, ProtocolError> {
@@ -570,17 +524,17 @@ mod tests {
         let options = vec![
             WireOption {
                 key: "s".into(),
-                value: WireOptionValue::String("value".into()),
+                value: JsonOptionValue::String("value".into()),
             },
             WireOption {
                 key: "b".into(),
-                value: WireOptionValue::Bytes(
+                value: JsonOptionValue::Bytes(
                     base64::engine::general_purpose::STANDARD.encode([0, 1, 2]),
                 ),
             },
             WireOption {
                 key: "i".into(),
-                value: WireOptionValue::Int(42),
+                value: JsonOptionValue::Int(42),
             },
         ];
         let encoded = encode_options(&options).unwrap();

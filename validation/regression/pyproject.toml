@@ -31,10 +31,9 @@ dev = ["mypy>=1.15", "ruff>=0.16", "types-psutil"]
 [tool.uv]
 package = false
 
-# Explicit development dependencies until the toolkit and VGI-RPC changes ship.
+# Only the toolkit needs a sibling checkout; VGI-RPC comes from the package index.
 [tool.uv.sources]
 grainlift-python = { path = "../../../grainlift-python", editable = true }
-vgi-rpc = { path = "../../../vgi-rpc", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

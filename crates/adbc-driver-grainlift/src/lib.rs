@@ -39,7 +39,7 @@ use arrow_buffer::ScalarBuffer;
 use arrow_schema::{ArrowError, DataType, Schema, SchemaRef, UnionMode};
 use grainlift_protocol as protocol;
 use rustls::pki_types::pem::PemObject;
-use vgi_rpc_client::{HttpClient, Metadata, RpcClient, RpcError};
+use vgi_rpc_client::{HttpClient, RpcClient, RpcError};
 use vgi_rpc_iroh::IrohTarget;
 
 pub const DRIVER_NAME: &str = "adbc_driver_grainlift";
@@ -157,7 +157,7 @@ impl GrainliftDatabase {
             })
             .map(|(key, value)| protocol::WireOption {
                 key: key.clone(),
-                value: protocol::WireOptionValue::from(value),
+                value: protocol::JsonOptionValue::from(value),
             })
             .collect()
     }
@@ -226,7 +226,7 @@ impl Database for GrainliftDatabase {
             .into_iter()
             .map(|(key, value)| protocol::WireOption {
                 key: key.as_ref().to_string(),
-                value: protocol::WireOptionValue::from(&value),
+                value: protocol::JsonOptionValue::from(&value),
             })
             .collect::<Vec<_>>();
         let state = RemoteConnection::open(RemoteConnectionOptions {
@@ -303,7 +303,7 @@ impl Connection for GrainliftConnection {
         let response = self
             .remote
             .call(protocol::method::NEW_STATEMENT, &request)?;
-        let statement_id = string_column(&response, "statement_id")?.to_string();
+        let statement_id = decode_response::<protocol::StatementResponse>(&response)?.statement_id;
         Ok(GrainliftStatement {
             remote: self.remote.clone(),
             statement_id,
@@ -683,18 +683,14 @@ impl Statement for GrainliftStatement {
         let response = self
             .remote
             .call(protocol::method::EXECUTE, &self.request()?)?;
-        let result_id = string_column(&response, "result_id")?.to_string();
-        let schema = protocol::decode_schema(binary_column(&response, "schema_ipc")?)
-            .map_err(|error| internal(error.to_string()))?;
-        let reader = RemoteReader::open(self.remote.clone(), result_id, Arc::new(schema))?;
-        Ok(Box::new(reader))
+        self.remote.reader_from_response(&response)
     }
 
     fn execute_update(&mut self) -> Result<Option<i64>> {
         let response = self
             .remote
             .call(protocol::method::EXECUTE_UPDATE, &self.request()?)?;
-        optional_i64_column(&response, "rows_affected")
+        Ok(decode_response::<protocol::UpdateResponse>(&response)?.rows_affected)
     }
 
     fn execute_schema(&mut self) -> Result<Schema> {
@@ -708,12 +704,16 @@ impl Statement for GrainliftStatement {
         let response = self
             .remote
             .call(protocol::method::EXECUTE_PARTITIONS, &self.request()?)?;
-        let partitions = serde_json::from_str(string_column(&response, "partitions_json")?)
-            .map_err(|error| internal(format!("invalid partitions response: {error}")))?;
+        let response = decode_response::<protocol::PartitionsResponse>(&response)?;
         Ok(PartitionedResult {
-            partitions,
-            schema: decode_schema_response(&response)?,
-            rows_affected: required_i64_column(&response, "rows_affected")?,
+            partitions: response
+                .partitions
+                .into_iter()
+                .map(|bytes| bytes.0)
+                .collect(),
+            schema: protocol::decode_schema(&response.schema_ipc.0)
+                .map_err(|error| internal(error.to_string()))?,
+            rows_affected: response.rows_affected,
         })
     }
 
@@ -1025,7 +1025,7 @@ impl RemoteConnection {
             ],
         )?;
         let response = transport.call(protocol::method::OPEN_CONNECTION, &request)?;
-        let session_id = string_column(&response, "session_id")?.to_string();
+        let session_id = decode_response::<protocol::SessionResponse>(&response)?.session_id;
         Ok(Self {
             transport,
             session_id,
@@ -1038,7 +1038,26 @@ impl RemoteConnection {
     }
 
     fn call(&self, method: &str, request: &RecordBatch) -> Result<RecordBatch> {
-        self.transport.call(method, request)
+        let response = self.transport.call(method, request)?;
+        if matches!(
+            method,
+            protocol::method::CLOSE_CONNECTION
+                | protocol::method::COMMIT
+                | protocol::method::ROLLBACK
+                | protocol::method::CANCEL_CONNECTION
+                | protocol::method::SET_CONNECTION_OPTION
+                | protocol::method::CLOSE_STATEMENT
+                | protocol::method::SET_STATEMENT_OPTION
+                | protocol::method::PREPARE
+                | protocol::method::SET_SQL_QUERY
+                | protocol::method::SET_SUBSTRAIT_PLAN
+                | protocol::method::CANCEL_STATEMENT
+                | protocol::method::CLOSE_RESULT
+        ) && !decode_response::<protocol::OkResponse>(&response)?.ok
+        {
+            return Err(internal("unary acknowledgement must be true"));
+        }
+        Ok(response)
     }
 
     fn bind_batches(
@@ -1059,7 +1078,9 @@ impl RemoteConnection {
             ],
         )?;
         let mut logical_bytes = 0usize;
-        let send = |exchange: &mut dyn FnMut(&RecordBatch, Option<&Metadata>) -> Result<()>| {
+        let mut encoded_bytes = 0usize;
+        let turn_limit = self.max_bind_bytes.min(protocol::MAX_CONTROL_BYTES);
+        let send = |exchange: &mut dyn FnMut(&RecordBatch) -> Result<()>| {
             for batch in batches {
                 let batch = batch?;
                 logical_bytes = logical_bytes
@@ -1071,14 +1092,23 @@ impl RemoteConnection {
                         self.max_bind_bytes
                     )));
                 }
-                exchange(&batch, None)?;
+                let turn = protocol::encode_bind_turn(Some(&batch), turn_limit)
+                    .map_err(|error| invalid(error.to_string()))?;
+                let payload = protocol::binary_value(&turn, "batch_ipc")
+                    .map_err(|error| invalid(error.to_string()))?;
+                encoded_bytes = encoded_bytes
+                    .checked_add(payload.len())
+                    .ok_or_else(|| invalid("bind stream size overflow"))?;
+                if encoded_bytes > self.max_bind_bytes {
+                    return Err(invalid(
+                        "serialized bind stream exceeds configured byte limit",
+                    ));
+                }
+                exchange(&turn)?;
             }
-            let finish = RecordBatch::new_empty(schema);
-            let metadata = Metadata::from([(
-                protocol::BIND_FINISH_METADATA_KEY.to_string(),
-                "1".to_string(),
-            )]);
-            exchange(&finish, Some(&metadata))
+            let finish = protocol::encode_bind_turn(None, turn_limit)
+                .map_err(|error| invalid(error.to_string()))?;
+            exchange(&finish)
         };
 
         match &self.transport {
@@ -1087,12 +1117,12 @@ impl RemoteConnection {
                 let mut stream = client
                     .open_exchange(method, &init, None, false)
                     .map_err(rpc_error)?;
-                let result = send(&mut |batch, metadata| {
-                    stream
-                        .exchange(batch, metadata)
+                let result = send(&mut |batch| {
+                    let ack = stream
+                        .exchange(batch, None)
                         .map_err(rpc_error)?
                         .ok_or_else(|| internal("bind exchange ended before acknowledgement"))?;
-                    Ok(())
+                    validate_bind_ack(&ack.0)
                 });
                 if result.is_err() {
                     let _ = stream.cancel();
@@ -1107,12 +1137,12 @@ impl RemoteConnection {
                 let mut stream = client
                     .open_exchange(method, &init, None, false)
                     .map_err(rpc_error)?;
-                let result = send(&mut |batch, metadata| {
-                    stream
-                        .exchange(batch, metadata)
+                let result = send(&mut |batch| {
+                    let ack = stream
+                        .exchange(batch, None)
                         .map_err(rpc_error)?
                         .ok_or_else(|| internal("bind exchange ended before acknowledgement"))?;
-                    Ok(())
+                    validate_bind_ack(&ack.0)
                 });
                 if result.is_err() {
                     let _ = stream.cancel();
@@ -1137,12 +1167,12 @@ impl RemoteConnection {
         self: &Arc<Self>,
         response: &RecordBatch,
     ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
-        let result_id = string_column(response, "result_id")?.to_string();
-        let schema = protocol::decode_schema(binary_column(response, "schema_ipc")?)
+        let response = decode_response::<protocol::ExecuteResponse>(response)?;
+        let schema = protocol::decode_schema(&response.schema_ipc.0)
             .map_err(|error| internal(error.to_string()))?;
         Ok(Box::new(RemoteReader::open(
             self.clone(),
-            result_id,
+            response.result_id,
             Arc::new(schema),
         )?))
     }
@@ -1445,7 +1475,7 @@ fn connection_option_request(
     key: &str,
     value: &OptionValue,
 ) -> Result<RecordBatch> {
-    let value = serde_json::to_string(&protocol::WireOptionValue::from(value))
+    let value = serde_json::to_string(&protocol::JsonOptionValue::from(value))
         .map_err(|error| invalid(error.to_string()))?;
     Ok(RecordBatch::try_new(
         protocol::connection_option_schema(),
@@ -1478,7 +1508,7 @@ fn statement_option_request(
     key: &str,
     value: &OptionValue,
 ) -> Result<RecordBatch> {
-    let value = serde_json::to_string(&protocol::WireOptionValue::from(value))
+    let value = serde_json::to_string(&protocol::JsonOptionValue::from(value))
         .map_err(|error| invalid(error.to_string()))?;
     Ok(RecordBatch::try_new(
         protocol::statement_option_schema(),
@@ -1533,67 +1563,36 @@ fn result_request(session_id: &str, result_id: &str) -> Result<RecordBatch> {
     )?)
 }
 
-fn string_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a str> {
-    let column = batch
-        .column_by_name(name)
-        .ok_or_else(|| internal(format!("response is missing column {name:?}")))?;
-    let values = column
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| internal(format!("response column {name:?} is not UTF-8")))?;
-    if batch.num_rows() != 1 || values.is_null(0) {
-        return Err(internal(format!(
-            "response column {name:?} must contain one non-null value"
-        )));
-    }
-    Ok(values.value(0))
-}
-
-fn binary_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a [u8]> {
-    let column = batch
-        .column_by_name(name)
-        .ok_or_else(|| internal(format!("response is missing column {name:?}")))?;
-    let values = column
-        .as_any()
-        .downcast_ref::<BinaryArray>()
-        .ok_or_else(|| internal(format!("response column {name:?} is not binary")))?;
-    if batch.num_rows() != 1 || values.is_null(0) {
-        return Err(internal(format!(
-            "response column {name:?} must contain one non-null value"
-        )));
-    }
-    Ok(values.value(0))
-}
-
-fn optional_i64_column(batch: &RecordBatch, name: &str) -> Result<Option<i64>> {
-    let column = batch
-        .column_by_name(name)
-        .ok_or_else(|| internal(format!("response is missing column {name:?}")))?;
-    let values = column
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .ok_or_else(|| internal(format!("response column {name:?} is not int64")))?;
-    if batch.num_rows() != 1 {
-        return Err(internal("response must contain exactly one row"));
-    }
-    Ok((!values.is_null(0)).then(|| values.value(0)))
-}
-
-fn required_i64_column(batch: &RecordBatch, name: &str) -> Result<i64> {
-    optional_i64_column(batch, name)?
-        .ok_or_else(|| internal(format!("response column {name:?} must not be null")))
-}
-
-fn decode_schema_response(batch: &RecordBatch) -> Result<Schema> {
-    protocol::decode_schema(binary_column(batch, "schema_ipc")?)
+fn decode_response<T: protocol::VgiArrow>(batch: &RecordBatch) -> Result<T> {
+    protocol::decode_response(batch, protocol::MAX_CONTROL_BYTES)
         .map_err(|error| internal(error.to_string()))
 }
 
+fn validate_bind_ack(batch: &RecordBatch) -> Result<()> {
+    if batch.schema().fields() != protocol::empty_response_schema().fields()
+        || batch.num_rows() != 1
+    {
+        return Err(internal("invalid bind acknowledgement schema or row count"));
+    }
+    let ok = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::BooleanArray>()
+        .ok_or_else(|| internal("invalid bind acknowledgement type"))?;
+    if ok.is_null(0) || !ok.value(0) {
+        return Err(internal("bind acknowledgement must be true"));
+    }
+    Ok(())
+}
+
+fn decode_schema_response(batch: &RecordBatch) -> Result<Schema> {
+    let response = decode_response::<protocol::SchemaResponse>(batch)?;
+    protocol::decode_schema(&response.schema_ipc.0).map_err(|error| internal(error.to_string()))
+}
+
 fn decode_option_response(batch: &RecordBatch) -> Result<OptionValue> {
-    let value =
-        serde_json::from_str::<protocol::WireOptionValue>(string_column(batch, "value_json")?)
-            .map_err(|error| internal(format!("invalid option response: {error}")))?;
-    value
+    decode_response::<protocol::ValueResponse>(batch)?
+        .value
         .into_adbc()
         .map_err(|error| internal(error.to_string()))
 }
@@ -1717,7 +1716,12 @@ fn read_private_key(path: &str) -> Result<rustls::pki_types::PrivateKeyDer<'stat
 
 fn rpc_error(error: RpcError) -> Error {
     if error.error_type == "AdbcError"
-        && let Ok(wire) = serde_json::from_str::<protocol::WireAdbcError>(&error.message)
+        && let Ok(wire) = serde_json::from_str::<protocol::WireAdbcError>(
+            error
+                .message
+                .strip_prefix("AdbcError: ")
+                .unwrap_or(&error.message),
+        )
     {
         return wire.into_adbc();
     }
@@ -1800,6 +1804,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn structured_errors_accept_only_the_stock_python_prefix() {
+        let original = Error {
+            message: "downstream failure".into(),
+            status: Status::InvalidData,
+            vendor_code: 73,
+            sqlstate: (*b"HY001").map(|byte| std::os::raw::c_char::from_ne_bytes([byte])),
+            details: Some(vec![("binary".into(), vec![0, 255])]),
+        };
+        let json = serde_json::to_string(&protocol::WireAdbcError::from(&original)).unwrap();
+        for message in [json.clone(), format!("AdbcError: {json}")] {
+            let decoded = rpc_error(RpcError::new("AdbcError", message));
+            assert_eq!(decoded.status, original.status);
+            assert_eq!(decoded.message, original.message);
+            assert_eq!(decoded.sqlstate, original.sqlstate);
+            assert_eq!(decoded.vendor_code, original.vendor_code);
+            assert_eq!(decoded.details, original.details);
+        }
+        for message in [
+            format!("AdbcError: AdbcError: {json}"),
+            format!("OtherError: {json}"),
+            "invalid JSON".into(),
+        ] {
+            assert_eq!(
+                rpc_error(RpcError::new("AdbcError", message)).status,
+                Status::IO
+            );
+        }
+        assert_eq!(
+            rpc_error(RpcError::new("OtherError", json)).status,
+            Status::IO
+        );
+    }
+
+    #[test]
     fn grainlift_options_are_not_forwarded() {
         assert!(is_grainlift_database_option(OPTION_GRAINLIFT_URI));
         assert!(is_grainlift_database_option(OPTION_TARGET));
@@ -1828,7 +1866,7 @@ mod tests {
         assert_eq!(options[0].key, "uri");
         assert_eq!(
             options[0].value,
-            protocol::WireOptionValue::String("postgresql://database.example/app".into())
+            protocol::JsonOptionValue::String("postgresql://database.example/app".into())
         );
     }
 

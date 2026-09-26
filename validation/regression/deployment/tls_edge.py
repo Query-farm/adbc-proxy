@@ -37,17 +37,18 @@ import threading
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from multiprocessing.connection import Connection as Pipe
 from pathlib import Path
-from typing import Annotated, ClassVar, Protocol
+from typing import ClassVar, Protocol
 
 import adbc_driver_manager as manager
 import adbc_driver_manager.dbapi as adbc
 import httpx2
 import pyarrow as pa
 from grainlift import Connection, Limits, QueryResult, Service, Worker
-from vgi_rpc import ProducerState, RpcError, Stream
+from vgi_rpc import ArrowSerializableDataclass, ProducerState, RpcError, Stream
 from vgi_rpc.http import http_connect
 
 REQUEST_LIMIT = 4096
@@ -56,32 +57,44 @@ SQL_SENTINEL = "private-sql-deployment-probe"
 DATA_SENTINEL = "private-arrow-deployment-probe"
 ERROR_SENTINEL = "private-downstream-deployment-probe"
 
-# Independent schemas intentionally avoid importing the implementation protocol.
-OpenResult = Annotated[pa.RecordBatch, pa.schema([pa.field("session_id", pa.string(), nullable=False)])]
-StatementResult = Annotated[
-    pa.RecordBatch,
-    pa.schema(
-        [pa.field("session_id", pa.string(), nullable=False), pa.field("statement_id", pa.string(), nullable=False)]
-    ),
-]
-OkResult = Annotated[pa.RecordBatch, pa.schema([pa.field("ok", pa.bool_(), nullable=False)])]
-ExecuteResult = Annotated[
-    pa.RecordBatch,
-    pa.schema(
-        [
-            pa.field("result_id", pa.string(), nullable=False),
-            pa.field("rows_affected", pa.int64()),
-            pa.field("schema_ipc", pa.binary(), nullable=False),
-        ]
-    ),
-]
+
+# Independent response dataclasses intentionally avoid the implementation protocol.
+@dataclass
+class OpenResult(ArrowSerializableDataclass):
+    """Carry an authenticated session identifier."""
+
+    session_id: str
+
+
+@dataclass
+class StatementResult(ArrowSerializableDataclass):
+    """Carry a statement and its owning session."""
+
+    session_id: str
+    statement_id: str
+
+
+@dataclass
+class OkResult(ArrowSerializableDataclass):
+    """Acknowledge one completed operation."""
+
+    ok: bool
+
+
+@dataclass
+class ExecuteResult(ArrowSerializableDataclass):
+    """Describe a lazy result and its serialized Arrow schema."""
+
+    result_id: str
+    rows_affected: int | None
+    schema_ipc: bytes
 
 
 class Grainlift(Protocol):
     """Declare the independently checked subset of the public wire contract."""
 
     protocol_name: ClassVar[str] = "org.queryfarm.Grainlift.v1"
-    protocol_version: ClassVar[str] = "0.2.0"
+    protocol_version: ClassVar[str] = "0.3.0"
 
     def open_connection(self, target: str, database_options_json: str, connection_options_json: str) -> OpenResult:
         """Allocate an authenticated session."""
@@ -275,8 +288,8 @@ def _port() -> int:
 
 def _handles(rpc: Grainlift) -> tuple[str, str]:
     opened = rpc.open_connection(target="default", database_options_json="[]", connection_options_json="[]")
-    session = str(opened.column("session_id")[0].as_py())
-    statement = str(rpc.new_statement(session_id=session).column("statement_id")[0].as_py())
+    session = opened.session_id
+    statement = rpc.new_statement(session_id=session).statement_id
     return session, statement
 
 
@@ -286,7 +299,7 @@ def _execute(rpc: Grainlift, session: str, statement: str, sql: str) -> pa.Recor
 
 
 def _data(rpc: Grainlift, session: str, executed: pa.RecordBatch) -> Iterator[pa.RecordBatch]:
-    result = str(executed.column("result_id")[0].as_py())
+    result = executed.result_id
     with rpc.read_result(session_id=session, result_id=result, sequence=0) as stream:
         for item in stream:
             yield item.batch
@@ -411,7 +424,7 @@ def validate(caddy: Path, driver: Path) -> dict[str, object]:
                                 assert time.monotonic() < deadline
                                 time.sleep(0.005)
                             parent.send("stop")
-                            assert pending.result(timeout=5).num_rows == 1
+                            assert pending.result(timeout=5).result_id
                         assert parent.poll(5), "Graceful host shutdown timed out"
                         shutdown = parent.recv()
                         assert shutdown == {"connections_closed": True, "listener_closed": True}

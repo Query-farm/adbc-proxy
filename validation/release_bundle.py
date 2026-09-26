@@ -33,7 +33,8 @@ from urllib.request import urlopen
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGES = ("vgi-rpc", "grainlift-python", "grainlift-hello-world-python")
+PACKAGES = ("grainlift-python", "grainlift-hello-world-python")
+TRANSPORT_REQUIREMENT = "vgi-rpc[http]==0.47.1"
 MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 
 
@@ -193,6 +194,7 @@ def build(output: Path, python: str) -> None:
     requirements = [f"./wheels/{wheel.name}" for wheel in sorted(wheels.glob("*.whl"))]
     requirements.extend(
         (
+            TRANSPORT_REQUIREMENT,
             "adbc-driver-manager==1.12.0",
             "pyarrow==25.0.1",
             "pytest==9.1.1",
@@ -227,9 +229,6 @@ def build(output: Path, python: str) -> None:
     for directory in ("tests", "soak", "deployment"):
         shutil.copytree(ROOT / "validation/regression" / directory, bundle / "regression" / directory, ignore=ignored)
     shutil.copy(ROOT / "validation/regression/pyproject.toml", bundle / "regression/pyproject.toml")
-    (bundle / "transport/tests").mkdir(parents=True)
-    for test_file in ("test_unary_record_batch.py", "test_empty_exchange.py"):
-        shutil.copy(ROOT.parent / "vgi-rpc/tests" / test_file, bundle / "transport/tests")
     if any(forbidden_artifact_path(str(path.relative_to(bundle))) for path in bundle.rglob("*")):
         raise RuntimeError("Candidate contains local workspace or credential files")
     manifest = {
@@ -239,6 +238,8 @@ def build(output: Path, python: str) -> None:
         "uv_version": subprocess.check_output(["uv", "--version"], text=True).strip(),
         "sdist_wheels_identical": True,
         "source_archives_clean": True,
+        "suites": ["toolkit", "hello", "regression"],
+        "transport": {"source": "package-index", "requirement": TRANSPORT_REQUIREMENT},
         "files": {str(path.relative_to(bundle)): digest(path) for path in sorted(bundle.rglob("*")) if path.is_file()},
     }
     (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -258,9 +259,23 @@ def verify(bundle: Path) -> None:
             raise ValueError(f"Invalid release artifact: {relative}")
 
 
+def validation_suites(manifest: dict[str, Any]) -> tuple[str, ...]:
+    """Require the full application gate while accepting historical transport suites."""
+    requested = manifest.get("suites", ["transport", "toolkit", "hello", "regression"])
+    if not isinstance(requested, list) or any(not isinstance(suite, str) for suite in requested):
+        raise ValueError("Release validation suites must be a list of names")
+    required = {"toolkit", "hello", "regression"}
+    selected = set(requested)
+    if not required.issubset(selected) or selected - (required | {"transport"}) or len(selected) != len(requested):
+        raise ValueError("Release validation requires each application suite exactly once")
+    return tuple(requested)
+
+
 def check(bundle: Path, python: str, driver: Path, evidence: Path) -> None:
     """Install hashed wheels into a fresh environment and run native tests."""
     verify(bundle)
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    selected_suites = validation_suites(manifest)
     driver = driver.resolve(strict=True)
     evidence.mkdir(parents=True, exist_ok=False)
     log = evidence / "validation.log"
@@ -337,7 +352,10 @@ def check(bundle: Path, python: str, driver: Path, evidence: Path) -> None:
         os.environ["GRAINLIFT_DRIVER"] = str(driver)
         suites = {}
         try:
-            for suite in ("transport", "toolkit", "hello", "regression"):
+            # Older immutable candidates include a locally built transport and
+            # its tests. New candidates exercise the published dependency through
+            # the SDK and native suites instead of rebuilding upstream VGI-RPC.
+            for suite in selected_suites:
                 junit = evidence / f"{suite}.xml"
                 run(
                     [str(executable), "-m", "pytest", "tests", "-q", "-p", "no:cacheprovider", f"--junitxml={junit}"],
@@ -365,6 +383,7 @@ def check(bundle: Path, python: str, driver: Path, evidence: Path) -> None:
             "suites": suites,
             "source_imports": False,
             "toolkit_quality": ["ruff", "ruff-format", "strict-mypy", "isolated-pydoclint"],
+            "transport": manifest.get("transport", {"source": "bundled-wheel"}),
         }
         (evidence / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(json.dumps(summary, indent=2))

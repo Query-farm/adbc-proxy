@@ -21,9 +21,13 @@ limitations under the License.
 tests on each of Python 3.13.12 and 3.14.7, including the expanded operation surface.
 Its [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v4)
 and [combined CI run](https://github.com/Query-farm/grainlift/actions/runs/36221096021)
-identify the exact current candidate. Its quality job and all four runtime jobs
+identify the exact published protocol 0.2 candidate. Its quality job and all four runtime jobs
 passed. The SDK and hello-world installed-wheel matrices also passed on
 Linux/macOS and Python 3.13/3.14.
+
+Protocol 0.3 source changes require a new candidate: the older artifacts are not
+wire-compatible with the current native driver. Their recorded results remain
+historical evidence, not validation of the typed-response migration.
 
 [Historical candidate v2 evidence](release-results/candidate-v2/README.md) records two
 successful fresh-environment runs: 240 tests on each of Python 3.13.12 and
@@ -32,8 +36,9 @@ passed the [Linux/macOS runtime matrix](https://github.com/Query-farm/grainlift/
 That historical candidate covers the query-only SDK. The expanded ADBC operation
 surface must be built and validated as a new candidate.
 
-`release_bundle.py` builds the current VGI-RPC transport, Python toolkit, and
-hello-world example as wheels and source distributions. It rebuilds every wheel
+`release_bundle.py` builds the Python toolkit and hello-world example as wheels
+and source distributions. Published VGI-RPC 0.47.1 is resolved from the package
+index with pinned hashes, without a custom transport wheel. It rebuilds every local wheel
 from its source distribution and requires byte-identical results. The build
 backend and its dependencies have a hash-locked constraints file. The bundle
 contains the exact wheels, a universal hash-locked dependency closure, copied
@@ -48,16 +53,16 @@ This caught and removed local agent worktrees and Hypothesis caches from the
 VGI-RPC source distribution during this review.
 
 The validator installs these wheels into a new temporary environment, checks
-dependency consistency and installed import locations, and runs four suites:
-VGI's fixed-schema Arrow/error compatibility tests, the entire toolkit suite,
-the entire hello-world suite, and the Grainlift native ADBC regression suite.
+dependency consistency and installed import locations, and runs three suites:
+the entire toolkit suite, the entire hello-world suite, and the Grainlift native
+ADBC regression suite. Historical bundles retain their fourth transport suite.
 It clears inherited `PYTHONPATH`, `PYTHONHOME`, and `VIRTUAL_ENV`; tests run from
 copied directories outside all source checkouts. Any skipped test fails the
 release gate. Registry dependencies are downloaded as binary wheels with
 mandatory hashes; no dependency source builds are allowed during validation.
 
 This tests installation from built packages without source-checkout imports.
-Building a new candidate still requires all three sibling source checkouts.
+Building a new candidate requires the two Grainlift Python sibling checkouts.
 The bundle does not contain third-party dependency wheels, so installing a
 candidate requires access to the package registry/cache.
 
@@ -152,12 +157,10 @@ reviewed checksum separately from the download site.
 
 ## Remaining publication decision
 
-The local VGI wheel still carries version `0.47.1` with unreleased package changes.
-Its hash distinguishes it from the registry package of the same version. Do
-not publish this modified artifact over that version, or install only the SDK
-wheel and assume registry VGI `0.47.1` has the required compatibility changes.
-Publish those VGI changes under a new version, raise the SDK's runtime
-dependency floor to that version, choose the SDK/example release versions,
-then rebuild and pass these exact gates again. Public repositories and a GitHub
+Protocol 0.3 uses published VGI-RPC `0.47.1`; it requires no new transport release.
+Choose the SDK/example release versions, then rebuild and pass these exact gates
+with a new protocol 0.3 candidate. Do not reuse the modified transport wheel from
+historical candidates or validate the current driver against their old SDK.
+Public repositories and a GitHub
 prerelease do not publish these wheels to a package index or approve a
 production rollout.

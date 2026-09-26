@@ -23,19 +23,24 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar, Protocol
 from wsgiref.simple_server import make_server
 
 import adbc_driver_manager as manager
 import adbc_driver_manager.dbapi as dbapi
 import falcon.testing
+import httpx2
 import pyarrow as pa
 import pytest
 from grainlift import IsolatedWorker, Service, Worker
+from vgi_rpc import AnnotatedBatch, ExchangeState, Stream
+from vgi_rpc.http import http_connect
 
 from .conftest import Harness, QuietHandler, ThreadedServer
 from .feature_schemas import INFO_SCHEMA, OBJECTS_SCHEMA, STATISTIC_NAMES_SCHEMA, STATISTICS_SCHEMA, TABLE_TYPES_SCHEMA
 from .feature_worker import SQLiteFeatureWorker, Value
-from .test_wire import Wire
+from .test_rotation import Grainlift
+from .test_wire import OPTION_TYPE, Wire, decode_error, decode_reply
 
 
 @dataclass
@@ -87,6 +92,21 @@ class FeatureHarness:
             driver=self.driver, entrypoint="AdbcDriverGrainliftInit", db_kwargs=options, autocommit=True
         ) as connection:
             yield connection
+
+
+class BindingOracle(Grainlift, Protocol):
+    """Declare binding independently using the stock VGI exchange mechanism."""
+
+    protocol_name: ClassVar[str] = "org.queryfarm.Grainlift.v1"
+    protocol_version: ClassVar[str] = "0.3.0"
+
+    def bind(self, session_id: str, statement_id: str, schema_ipc: bytes) -> Stream[ExchangeState]:
+        """Stage one parameter batch using the fixed nonempty exchange envelope."""
+        ...
+
+    def bind_stream(self, session_id: str, statement_id: str, schema_ipc: bytes) -> Stream[ExchangeState]:
+        """Stage a parameter stream using the same independently declared envelope."""
+        ...
 
 
 @pytest.fixture(params=["inprocess", "isolated"])
@@ -284,6 +304,51 @@ def test_bound_empty_shapes_preserve_schema_and_row_count(
         assert result.schema.equals(batch.schema, check_metadata=True)
         assert result.num_rows == batch.num_rows
         assert result.num_columns == batch.num_columns
+
+
+@pytest.mark.native
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("zero_columns", [False, True])
+def test_stock_vgi_binding_uses_independent_fixed_envelope(
+    features: FeatureHarness, stream: bool, zero_columns: bool
+) -> None:
+    """Stock VGI exchanges a fixed envelope even for nonempty zero-column Arrow parameters."""
+    parameter = (
+        pa.RecordBatch.from_struct_array(pa.array([{}, {}, {}], type=pa.struct([])))
+        if zero_columns
+        else pa.record_batch([[3, 5, 7]], names=["value"])
+    )
+    frame_schema = pa.schema([pa.field("batch_ipc", pa.binary(), False), pa.field("finish", pa.bool_(), False)])
+    acknowledgement = pa.schema([pa.field("ok", pa.bool_(), False)])
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, parameter.schema) as writer:
+        writer.write_batch(parameter)
+    schema_metadata = pa.ipc.read_message(parameter.schema.serialize()).metadata.to_pybytes()
+    with (
+        httpx2.Client(base_url=features.endpoint, headers={"Authorization": "Bearer alice-token"}, timeout=10) as http,
+        http_connect(BindingOracle, client=http) as rpc,  # type: ignore[type-abstract]
+    ):
+        session = rpc.open_connection(target="features", database_options_json="[]", connection_options_json="[]")
+        statement = rpc.new_statement(session_id=session.session_id)
+        arguments = {"session_id": session.session_id, "statement_id": statement.statement_id}
+        try:
+            rpc.set_sql_query(**arguments, sql="SELECT echo_bound")
+            method = rpc.bind_stream if stream else rpc.bind
+            with method(**arguments, schema_ipc=schema_metadata) as upload:
+                for payload, finish in ((sink.getvalue().to_pybytes(), False), (b"", True)):
+                    frame = pa.record_batch([[payload], [finish]], schema=frame_schema)
+                    response = upload.exchange(AnnotatedBatch(frame)).batch
+                    assert response.schema.equals(acknowledgement, check_metadata=True)
+                    assert response.to_pylist() == [{"ok": True}]
+            result = rpc.execute(**arguments)
+            with rpc.read_result(session_id=session.session_id, result_id=result.result_id, sequence=0) as download:
+                batches = [response.batch for response in download]
+            table = pa.Table.from_batches(batches, schema=parameter.schema)
+            assert table.schema.equals(parameter.schema, check_metadata=True)
+            assert table.num_rows == parameter.num_rows
+            assert table.to_pylist() == parameter.to_pylist()
+        finally:
+            assert rpc.close_connection(session_id=session.session_id).ok
 
 
 @pytest.mark.native
@@ -528,13 +593,12 @@ def test_metadata_wire_reply_schema_is_independent_of_sdk(
         response = wire.call(
             "open_connection", {"target": "features", "database_options_json": "[]", "connection_options_json": "[]"}
         )
-        sid = pa.ipc.open_stream(response.content).read_next_batch().column(0)[0].as_py()
+        sid = decode_reply(response).column(0)[0].as_py()
         values = {"session_id": sid}
         if args is not None:
             values["args_json"] = json.dumps(args)
         response = wire.call(method, values)
         assert response.status_code == 200
-        reader = pa.ipc.open_stream(response.content)
         expected = pa.schema(
             [
                 pa.field("result_id", pa.string(), False),
@@ -542,8 +606,7 @@ def test_metadata_wire_reply_schema_is_independent_of_sdk(
                 pa.field("schema_ipc", pa.binary(), False),
             ]
         )
-        assert reader.schema.equals(expected)
-        batch = reader.read_next_batch()
+        batch = decode_reply(response, expected)
         assert batch.num_rows == 1
         assert len(batch.column("schema_ipc")[0].as_py()) > 0
 
@@ -555,13 +618,13 @@ def test_expanded_unary_wire_schemas_and_typed_values(tmp_path: Path) -> None:
         opened = wire.call(
             "open_connection", {"target": "features", "database_options_json": "[]", "connection_options_json": "[]"}
         )
-        sid = str(pa.ipc.open_stream(opened.content).read_next_batch().column(0)[0].as_py())
+        sid = str(decode_reply(opened).column(0)[0].as_py())
         created = wire.call("new_statement", {"session_id": sid})
-        reader = pa.ipc.open_stream(created.content)
-        assert reader.schema.equals(
-            pa.schema([pa.field("session_id", pa.string(), False), pa.field("statement_id", pa.string(), False)])
+        created_batch = decode_reply(
+            created,
+            pa.schema([pa.field("session_id", pa.string(), False), pa.field("statement_id", pa.string(), False)]),
         )
-        statement_id = str(reader.read_next_batch().column("statement_id")[0].as_py())
+        statement_id = str(created_batch.column("statement_id")[0].as_py())
         statement = {"session_id": sid, "statement_id": statement_id}
         ok = pa.schema([pa.field("ok", pa.bool_(), False)])
         for method, parameters in (
@@ -570,33 +633,41 @@ def test_expanded_unary_wire_schemas_and_typed_values(tmp_path: Path) -> None:
             ("set_statement_option", {**statement, "key": "fixture.int", "value_json": '{"type":"int","value":17}'}),
         ):
             response = wire.call(method, parameters)
-            assert pa.ipc.open_stream(response.content).schema.equals(ok)
-        updated = pa.ipc.open_stream(wire.call("execute_update", statement).content)
-        assert updated.schema.equals(pa.schema([pa.field("rows_affected", pa.int64())]))
-        assert updated.read_next_batch().column(0)[0].as_py() == 1
-        option = pa.ipc.open_stream(
-            wire.call("get_statement_option", {**statement, "key": "fixture.int", "value_type": "int"}).content
+            assert decode_reply(response, ok).column("ok")[0].as_py() is True
+        updated = decode_reply(
+            wire.call("execute_update", statement), pa.schema([pa.field("rows_affected", pa.int64())])
         )
-        assert option.schema.equals(pa.schema([pa.field("value_json", pa.string(), False)]))
-        assert json.loads(option.read_next_batch().column(0)[0].as_py()) == {"type": "int", "value": 17}
+        assert updated.column(0)[0].as_py() == 1
+        option = decode_reply(
+            wire.call("get_statement_option", {**statement, "key": "fixture.int", "value_type": "int"}),
+            pa.schema([pa.field("value", OPTION_TYPE, nullable=False)]),
+        )
+        assert option.column("value")[0].as_py() == {
+            "kind": "int",
+            "string_value": None,
+            "bytes_value": None,
+            "int_value": 17,
+            "double_value": None,
+        }
         wire.call("set_sql_query", {**statement, "sql": "SELECT ? AS value"})
-        schema_reply = pa.ipc.open_stream(wire.call("get_parameter_schema", statement).content)
-        assert schema_reply.schema.equals(pa.schema([pa.field("schema_ipc", pa.binary(), False)]))
-        assert len(schema_reply.read_next_batch().column(0)[0].as_py()) > 0
+        schema_reply = decode_reply(
+            wire.call("get_parameter_schema", statement), pa.schema([pa.field("schema_ipc", pa.binary(), False)])
+        )
+        assert len(schema_reply.column(0)[0].as_py()) > 0
         wire.call("set_sql_query", {**statement, "sql": "SELECT id, label FROM items"})
-        partitions = pa.ipc.open_stream(wire.call("execute_partitions", statement).content)
-        assert partitions.schema.equals(
+        exported = decode_reply(
+            wire.call("execute_partitions", statement),
             pa.schema(
                 [
                     pa.field("rows_affected", pa.int64(), False),
                     pa.field("schema_ipc", pa.binary(), False),
-                    pa.field("partitions_json", pa.string(), False),
+                    pa.field("partitions", pa.list_(pa.binary()), False),
                 ]
-            )
+            ),
         )
-        exported = partitions.read_next_batch()
         assert exported.column("rows_affected")[0].as_py() == 1
-        assert len(json.loads(exported.column("partitions_json")[0].as_py())) == 1
+        assert len(exported.column("partitions")[0].as_py()) == 1
+        assert isinstance(exported.column("partitions")[0].as_py()[0], bytes)
 
 
 def test_server_authoritative_options_reject_open_and_mutation_overrides(tmp_path: Path) -> None:
@@ -610,15 +681,19 @@ def test_server_authoritative_options_reject_open_and_mutation_overrides(tmp_pat
         opened = wire.call(
             "open_connection", {"target": "features", "database_options_json": "[]", "connection_options_json": "[]"}
         )
-        sid = str(pa.ipc.open_stream(opened.content).read_next_batch().column(0)[0].as_py())
-        for key, kind, expected in (("fixture.database.int", "int", 17), ("fixture.connection.bytes", "bytes", "AP8=")):
+        sid = str(decode_reply(opened).column(0)[0].as_py())
+        for key, kind, expected in (
+            ("fixture.database.int", "int", 17),
+            ("fixture.connection.bytes", "bytes", b"\x00\xff"),
+        ):
             response = wire.call("get_connection_option", {"session_id": sid, "key": key, "value_type": kind})
-            assert json.loads(pa.ipc.open_stream(response.content).read_next_batch().column(0)[0].as_py()) == {
-                "type": kind,
-                "value": expected,
-            }
+            option = (
+                decode_reply(response, pa.schema([pa.field("value", OPTION_TYPE, False)])).column("value")[0].as_py()
+            )
+            assert option["kind"] == kind
+            assert option[f"{kind}_value"] == expected
         created = wire.call("new_statement", {"session_id": sid})
-        statement_id = str(pa.ipc.open_stream(created.content).read_next_batch().column("statement_id")[0].as_py())
+        statement_id = str(decode_reply(created).column("statement_id")[0].as_py())
         attempts = [
             (
                 "open_connection",
@@ -648,5 +723,4 @@ def test_server_authoritative_options_reject_open_and_mutation_overrides(tmp_pat
         ]
         for method, values in attempts:
             response = wire.call(method, values)
-            _, metadata = pa.ipc.open_stream(response.content).read_next_batch_with_custom_metadata()
-            assert json.loads(metadata[b"vgi_rpc.log_message"])["status"] == "unauthorized"
+            assert decode_error(response)["status"] == "unauthorized"

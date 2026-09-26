@@ -127,3 +127,37 @@ def test_local_machine_files_are_forbidden(name: str) -> None:
 def test_application_code_and_package_data_are_allowed(name: str) -> None:
     """Credential-management source and required package data remain distributable."""
     assert not release_bundle.forbidden_artifact_path(name)
+
+
+def test_historical_candidate_requires_all_original_suites() -> None:
+    """Absent suite metadata retains the historical transport plus full application gate."""
+    assert release_bundle.validation_suites({}) == ("transport", "toolkit", "hello", "regression")
+
+
+def test_stock_transport_candidate_keeps_all_application_suites() -> None:
+    """Published transport dependencies remove only the separately bundled transport tests."""
+    suites = ["toolkit", "hello", "regression"]
+    assert release_bundle.validation_suites({"suites": suites}) == tuple(suites)
+
+
+@pytest.mark.parametrize(
+    "suites",
+    [
+        [],
+        ["hello", "regression"],
+        ["toolkit", "regression"],
+        ["toolkit", "hello"],
+        ["toolkit", "hello", "regression", "regression"],
+        ["toolkit", "hello", "regression", "unknown"],
+        ["toolkit", "hello", "regression", "../other"],
+        ["toolkit", "hello", "regression", 1],
+        ["toolkit", "hello", "regression", []],
+        None,
+        "toolkit,hello,regression",
+        {"toolkit": True, "hello": True, "regression": True},
+    ],
+)
+def test_malformed_suite_selection_cannot_bypass_release_gate(suites: object) -> None:
+    """Missing, duplicated, unknown, or wrongly typed suite lists cannot yield partial success."""
+    with pytest.raises(ValueError, match="Release validation"):
+        release_bundle.validation_suites({"suites": suites})

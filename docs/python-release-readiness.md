@@ -23,8 +23,21 @@ limitations under the License.
 This record separates locally completed engineering gates from publication,
 remote CI, and deployment decisions. The scope is an authenticated HTTP service
 with bounded pull-based Arrow results and optional process-isolated callbacks.
-The SDK exposes every Grainlift protocol 0.2.0 operation; each backend implements
+The SDK exposes every Grainlift protocol 0.3.0 operation; each backend implements
 the capabilities it supports. This does not imply transparent multi-replica use.
+
+The [typed-response migration](typed-protocol.md) changes the wire contract and
+restores compatibility with published VGI-RPC 0.47.1. The candidate v4 results
+below describe protocol 0.2 and do not validate these new source changes. A new
+installed-package candidate and runtime matrix are required before release.
+
+Current protocol 0.3 source validation: 344 SDK tests, 138 native Python
+regression tests and 13 hello-world tests pass using registry VGI-RPC 0.47.1.
+Ruff, formatting, strict mypy and isolated pydoclint pass. The SDK's
+[installed-wheel matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36244653629)
+passes Linux/macOS on Python 3.13/3.14. Restoring the transport's stock semantics
+passes 4,970 VGI-RPC tests; the `vgi-python` consumer retains its baseline result
+of 2,704 passes, 104 skips and one pre-existing directory-parity test failure.
 
 The original candidate v2 validated the query-only SDK. The new operation surface
 adds transactions, preparation, binding, ingestion, metadata/statistics, partitions,
@@ -50,7 +63,8 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 ## Defects fixed during the gates
 
 - VGI-RPC mistook zero-column bidirectional parameter exchanges for output-only
-  producers. Explicit exchange direction now preserves binding semantics.
+  producers. Candidate v4 patched explicit exchange direction; protocol 0.3 uses
+  a fixed nonempty binding envelope and works with the published transport.
 - Isolated result cleanup could replace a primary structured ADBC error if the
   backend also failed while closing its cursor. Cleanup now preserves that error.
 - Statement close removes the cancellation target before invoking backend cleanup,
@@ -93,10 +107,10 @@ It is available as a [GitHub prerelease](https://github.com/Query-farm/grainlift
 and passed the [remote runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36218130106).
 It contains the earlier query-only implementation. Full provenance,
 hash-locked runtime/build requirements, JUnit results and summaries are retained
-with that evidence. The candidate includes modified VGI-RPC code under its old
-development version; publish a new VGI version and update the SDK dependency floor
-before creating public index releases. Do not overwrite an existing registry
-version or rely on registry VGI 0.47.1 for the unpublished compatibility changes.
+with that evidence. Those historical candidates include modified VGI-RPC code
+under its old development version. Protocol 0.3 removes that dependency: new
+candidates resolve the unmodified registry transport and build only the SDK and
+example packages. Historical bundles must retain their original dependencies.
 
 The [release instructions](../validation/RELEASE.md) define candidate creation,
 configuration, matrix execution and publication. Linux evidence comes from remote

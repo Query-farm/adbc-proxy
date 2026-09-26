@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adbc-driver-grainlift"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "adbc_core",
  "adbc_ffi",
@@ -1478,7 +1478,7 @@ dependencies = [
 
 [[package]]
 name = "grainlift-protocol"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
@@ -1488,11 +1488,12 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "vgi-rpc",
 ]
 
 [[package]]
 name = "grainlift-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "adbc-driver-grainlift",
  "adbc_core",

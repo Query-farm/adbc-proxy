@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Run from any directory. The Python SDK and VGI-RPC are explicit local inputs.
+# Run from any directory. The Python SDK is the only explicit sibling input.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,12 +28,10 @@ case "$mode" in
   *) echo "Usage: $0 [all|quality|test|unit] [pytest arguments]" >&2; exit 2 ;;
 esac
 
-for dependency in grainlift-python vgi-rpc; do
-  if [[ ! -f "$repo_root/../$dependency/pyproject.toml" ]]; then
-    echo "Missing sibling checkout: $repo_root/../$dependency" >&2
-    exit 1
-  fi
-done
+if [[ ! -f "$repo_root/../grainlift-python/pyproject.toml" ]]; then
+  echo "Missing sibling checkout: $repo_root/../grainlift-python" >&2
+  exit 1
+fi
 
 uv sync --project "$project"
 cd "$project"

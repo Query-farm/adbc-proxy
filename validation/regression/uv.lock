@@ -244,7 +244,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pyarrow", specifier = ">=19" },
-    { name = "vgi-rpc", extras = ["http"], editable = "../../../vgi-rpc" },
+    { name = "vgi-rpc", extras = ["http"], specifier = ">=0.47.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -822,12 +822,16 @@ wheels = [
 [[package]]
 name = "vgi-rpc"
 version = "0.47.1"
-source = { editable = "../../../vgi-rpc" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
     { name = "pyarrow" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/e9/7509cc8cadf63dec8cd6b9419c75dfae76dea7f76d5430def97c94761f89/vgi_rpc-0.47.1.tar.gz", hash = "sha256:d5c1801c088907693cf937abc7a5e47121a43d92d56517bd32ad4fd96db54850", size = 1505659, upload-time = "2026-09-18T20:51:30.211Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/a1/b0aea7a28414b6e1b060d7157ddc49e550f7af6b40383e935ec4c9aa610f/vgi_rpc-0.47.1-py3-none-any.whl", hash = "sha256:f0b9884358a6df7cf3c6df04d889045853f0d791d3dc5f6783e5ea28c1e18b54", size = 696128, upload-time = "2026-09-18T20:51:28.143Z" },
 ]
 
 [package.optional-dependencies]
@@ -839,87 +843,6 @@ http = [
     { name = "pynacl", marker = "sys_platform == 'linux'" },
     { name = "waitress" },
     { name = "zstandard" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'external'", specifier = ">=3.14.1" },
-    { name = "boto3", marker = "extra == 's3'", specifier = ">=1.28" },
-    { name = "cryptography", marker = "extra == 'mtls'", specifier = ">=50.0" },
-    { name = "docstring-parser", specifier = ">=0.16" },
-    { name = "falcon", marker = "extra == 'http'", specifier = ">=3.0" },
-    { name = "filelock", marker = "extra == 'cli'", specifier = ">=3.13" },
-    { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=2.10" },
-    { name = "httpx2", marker = "extra == 'cli'", specifier = ">=2.9.1" },
-    { name = "httpx2", extras = ["zstd"], marker = "extra == 'http'", specifier = ">=2.9.1" },
-    { name = "httpx2", extras = ["zstd"], marker = "extra == 'iroh'", specifier = ">=2.9.1" },
-    { name = "iroh", marker = "extra == 'iroh'", specifier = ">=1.1,<2" },
-    { name = "joserfc", marker = "extra == 'oauth'", specifier = ">=1.0" },
-    { name = "jsonschema", marker = "extra == 'conformance'", specifier = ">=4.0" },
-    { name = "msgpack", marker = "extra == 'http'", specifier = ">=1.0" },
-    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
-    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
-    { name = "psutil", marker = "extra == 'conformance'", specifier = ">=6.0" },
-    { name = "pyarrow", specifier = ">=14.0" },
-    { name = "pycryptodome", marker = "extra == 'http'", specifier = ">=3.20" },
-    { name = "pynacl", marker = "sys_platform == 'linux' and extra == 'http'", specifier = ">=1.6.0" },
-    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=306" },
-    { name = "sentry-sdk", marker = "extra == 'sentry'", specifier = ">=2.0" },
-    { name = "tenacity", marker = "extra == 'external'", specifier = ">=8.0" },
-    { name = "typer", marker = "extra == 'cli'", specifier = ">=0.9" },
-    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
-    { name = "waitress", marker = "extra == 'http'", specifier = ">=2.0" },
-    { name = "zstandard", marker = "extra == 'external'", specifier = ">=0.20" },
-    { name = "zstandard", marker = "extra == 'http'", specifier = ">=0.20" },
-]
-provides-extras = ["http", "s3", "gcs", "cli", "external", "otel", "oauth", "mtls", "sentry", "conformance", "iroh"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "aiointercept", specifier = ">=0.1.7" },
-    { name = "boto3", specifier = ">=1.28" },
-    { name = "cryptography", specifier = ">=50.0" },
-    { name = "falcon", specifier = ">=3.0" },
-    { name = "filelock", specifier = ">=3.13" },
-    { name = "google-cloud-storage", specifier = ">=2.10" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "httpx2", specifier = ">=2.9.1" },
-    { name = "hypothesis", specifier = ">=6.155.3" },
-    { name = "joserfc", specifier = ">=1.0" },
-    { name = "jsonschema", specifier = ">=4.0" },
-    { name = "lxml", specifier = ">=6.0.2" },
-    { name = "moto", extras = ["s3"], specifier = ">=4.0" },
-    { name = "mutmut", specifier = ">=3.4.0" },
-    { name = "mypy", specifier = ">=1.0" },
-    { name = "opentelemetry-api", specifier = ">=1.20" },
-    { name = "opentelemetry-sdk", specifier = ">=1.20" },
-    { name = "psutil", specifier = ">=6.0" },
-    { name = "pyarrow-stubs", specifier = ">=17.0" },
-    { name = "pycryptodome", specifier = ">=3.20" },
-    { name = "pytest", specifier = ">=7.0" },
-    { name = "pytest-benchmark", specifier = ">=4.0" },
-    { name = "pytest-cov", specifier = ">=4.0" },
-    { name = "pytest-examples", specifier = ">=0.0.10" },
-    { name = "pytest-mypy", specifier = ">=0.10" },
-    { name = "pytest-ruff", specifier = ">=0.1" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "pytest-xdist", specifier = ">=3.6" },
-    { name = "ruff", specifier = ">=0.1" },
-    { name = "sentry-sdk", specifier = ">=2.0" },
-    { name = "ty", specifier = ">=0.0.8,<0.0.73" },
-    { name = "typer", specifier = ">=0.9" },
-    { name = "types-jsonschema", specifier = ">=4.0" },
-    { name = "types-psutil", specifier = ">=6.0" },
-    { name = "waitress", specifier = ">=2.0" },
-]
-docs = [
-    { name = "mkdocs", specifier = ">=1.6" },
-    { name = "mkdocs-d2-plugin", specifier = ">=1.4" },
-    { name = "mkdocs-material", specifier = ">=9.5" },
-    { name = "mkdocs-section-index", specifier = ">=0.3" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27" },
-    { name = "pygments", specifier = ">=2.20" },
-    { name = "pymdown-extensions", specifier = ">=10.21.2" },
 ]
 
 [[package]]

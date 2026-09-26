@@ -369,7 +369,12 @@ Grainlift outside a development environment.
 The [toolkit-backed regression suite](validation/regression/README.md) exercises
 the native ADBC client against a deterministic Python worker. Run
 `./validation/run_regression.sh` for its Python quality gates and HTTP integration
-tests. It requires the sibling development toolkit and VGI-RPC checkouts.
+tests. It requires the sibling development toolkit and published VGI-RPC.
+
+Protocol 0.3.0 uses [typed response records](docs/typed-protocol.md) with the
+standard VGI-RPC unary envelope. Upgrade native drivers, servers and the Python
+toolkit together; protocol 0.2 peers are incompatible. Nested IPC is uncompressed;
+compression belongs to the transport.
 
 The [Python worker toolkit](https://github.com/Query-farm/grainlift-python) exposes
 transactions, prepared statements, parameter batches/streams, ingestion, metadata,

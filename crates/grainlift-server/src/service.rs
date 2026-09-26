@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use adbc_core::error::Error as AdbcError;
 use adbc_core::options::{InfoCode, ObjectDepth, OptionValue};
-use arrow_array::{BinaryArray, BooleanArray, Int64Array, RecordBatch, StringArray};
+use arrow_array::{BooleanArray, RecordBatch};
 use grainlift_protocol as protocol;
 use serde::{Deserialize, Serialize};
 use vgi_rpc::server::{MethodInfo, MethodType, RpcServer, StateDecoder};
@@ -33,6 +33,7 @@ use crate::session::{BindMode, SessionManager};
 struct BindCursor {
     session_id: String,
     upload_id: String,
+    max_bytes: usize,
 }
 
 struct BindExchange {
@@ -52,26 +53,28 @@ impl ExchangeState for BindExchange {
             .manager
             .get(&self.cursor.session_id, &principal)
             .map_err(adbc_rpc_error)?;
-        if ctx
-            .tick_metadata(protocol::BIND_FINISH_METADATA_KEY)
-            .is_some()
-        {
-            if input.num_rows() != 0 {
-                return Err(RpcError::value_error(
-                    "bind finish turn must contain a zero-row batch",
-                ));
+        let batch = match protocol::decode_bind_turn(
+            input,
+            self.cursor.max_bytes.min(protocol::MAX_CONTROL_BYTES),
+        ) {
+            Ok(batch) => batch,
+            Err(error) => {
+                session.cancel_bind_upload(&self.cursor.upload_id);
+                return Err(protocol_rpc_error(error));
             }
-            session
-                .finish_bind_upload(&self.cursor.upload_id)
-                .map_err(adbc_rpc_error)?;
-            out.emit(ok_batch()?)?;
-            out.finish();
-        } else {
-            if let Err(error) = session.push_bind_upload(&self.cursor.upload_id, input.clone()) {
+        };
+        if let Some(batch) = batch {
+            if let Err(error) = session.push_bind_upload(&self.cursor.upload_id, batch) {
                 session.cancel_bind_upload(&self.cursor.upload_id);
                 return Err(adbc_rpc_error(error));
             }
-            out.emit(ok_batch()?)?;
+            out.emit(bind_ack()?)?;
+        } else {
+            session
+                .finish_bind_upload(&self.cursor.upload_id)
+                .map_err(adbc_rpc_error)?;
+            out.emit(bind_ack()?)?;
+            out.finish();
         }
         Ok(())
     }
@@ -200,8 +203,9 @@ fn register_open_connection(server: &mut RpcServer, manager: Arc<SessionManager>
         MethodInfo::unary(
             protocol::method::OPEN_CONNECTION,
             protocol::open_connection_schema(),
-            protocol::session_schema(),
+            protocol::unary_response_schema(),
             move |request, ctx| {
+                validate_protocol_version(request)?;
                 let principal = manager.principal(&ctx.auth)?;
                 let target = string(request, "target")?;
                 let database_options =
@@ -211,15 +215,22 @@ fn register_open_connection(server: &mut RpcServer, manager: Arc<SessionManager>
                     protocol::decode_options(string(request, "connection_options_json")?)
                         .map_err(protocol_rpc_error)?;
                 let session_id = manager
-                    .open(principal, target, database_options, connection_options)
-                    .map_err(adbc_rpc_error)?;
-                Ok(Some(
-                    RecordBatch::try_new(
-                        protocol::session_schema(),
-                        vec![Arc::new(StringArray::from(vec![session_id]))],
+                    .open(
+                        principal.clone(),
+                        target,
+                        database_options,
+                        connection_options,
                     )
-                    .map_err(arrow_rpc_error)?,
-                ))
+                    .map_err(adbc_rpc_error)?;
+                Ok(Some(handle_response(
+                    protocol::SessionResponse {
+                        session_id: session_id.clone(),
+                    },
+                    response_limit(ctx),
+                    || {
+                        let _ = manager.close(&session_id, &principal);
+                    },
+                )?))
             },
         )
         .doc("Open a server-side ADBC connection to an authorized target"),
@@ -240,7 +251,7 @@ fn register_session_operations(server: &mut RpcServer, manager: Arc<SessionManag
         server.register(MethodInfo::unary(
             name,
             protocol::session_schema(),
-            protocol::empty_response_schema(),
+            protocol::unary_response_schema(),
             move |request, ctx| {
                 let (session, _) = get_session(&manager, request, ctx)?;
                 operation(&session).map_err(adbc_rpc_error)?;
@@ -253,7 +264,7 @@ fn register_session_operations(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::CANCEL_CONNECTION,
         protocol::session_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&cancel_manager, request, ctx)?;
             session.cancel_connection().map_err(adbc_rpc_error)?;
@@ -265,8 +276,9 @@ fn register_session_operations(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::CLOSE_CONNECTION,
         protocol::session_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
+            validate_protocol_version(request)?;
             let principal = close_manager.principal(&ctx.auth)?;
             close_manager
                 .close(string(request, "session_id")?, &principal)
@@ -279,20 +291,20 @@ fn register_session_operations(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::NEW_STATEMENT,
         protocol::session_schema(),
-        protocol::statement_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, session_id) = get_session(&statement_manager, request, ctx)?;
             let statement_id = session.new_statement().map_err(adbc_rpc_error)?;
-            Ok(Some(
-                RecordBatch::try_new(
-                    protocol::statement_schema(),
-                    vec![
-                        Arc::new(StringArray::from(vec![session_id])),
-                        Arc::new(StringArray::from(vec![statement_id])),
-                    ],
-                )
-                .map_err(arrow_rpc_error)?,
-            ))
+            Ok(Some(handle_response(
+                protocol::StatementResponse {
+                    session_id,
+                    statement_id: statement_id.clone(),
+                },
+                response_limit(ctx),
+                || {
+                    let _ = session.close_statement(&statement_id);
+                },
+            )?))
         },
     ));
 }
@@ -302,7 +314,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::SET_CONNECTION_OPTION,
         protocol::connection_option_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&set_manager, request, ctx)?;
             let key = string(request, "key")?.to_string();
@@ -318,7 +330,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_CONNECTION_OPTION,
         protocol::connection_option_key_schema(),
-        protocol::value_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&get_manager, request, ctx)?;
             let key = string(request, "key")?.to_string();
@@ -343,7 +355,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_INFO,
         protocol::connection_args_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&info_manager, request, ctx)?;
             let args: InfoArgs = json_args(request)?;
@@ -356,7 +368,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
             let reader = session
                 .with_connection(move |connection| connection.get_info(codes))
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(insert_reader_response(&session, reader)?))
+            Ok(Some(insert_reader_response(&session, reader, ctx)?))
         },
     ));
 
@@ -364,7 +376,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_OBJECTS,
         protocol::connection_args_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&objects_manager, request, ctx)?;
             let args: ObjectsArgs = json_args(request)?;
@@ -385,7 +397,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
                     )
                 })
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(insert_reader_response(&session, reader)?))
+            Ok(Some(insert_reader_response(&session, reader, ctx)?))
         },
     ));
 
@@ -393,7 +405,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_TABLE_SCHEMA,
         protocol::connection_args_schema(),
-        protocol::schema_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&table_schema_manager, request, ctx)?;
             let args: TableSchemaArgs = json_args(request)?;
@@ -414,13 +426,13 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_TABLE_TYPES,
         protocol::session_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&table_types_manager, request, ctx)?;
             let reader = session
                 .with_connection(|connection| connection.get_table_types())
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(insert_reader_response(&session, reader)?))
+            Ok(Some(insert_reader_response(&session, reader, ctx)?))
         },
     ));
 
@@ -428,13 +440,13 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_STATISTIC_NAMES,
         protocol::session_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&statistic_names_manager, request, ctx)?;
             let reader = session
                 .with_connection(|connection| connection.get_statistic_names())
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(insert_reader_response(&session, reader)?))
+            Ok(Some(insert_reader_response(&session, reader, ctx)?))
         },
     ));
 
@@ -442,7 +454,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::GET_STATISTICS,
         protocol::connection_args_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&statistics_manager, request, ctx)?;
             let args: StatisticsArgs = json_args(request)?;
@@ -456,7 +468,7 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
                     )
                 })
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(insert_reader_response(&session, reader)?))
+            Ok(Some(insert_reader_response(&session, reader, ctx)?))
         },
     ));
 
@@ -464,14 +476,14 @@ fn register_connection_surface(server: &mut RpcServer, manager: Arc<SessionManag
     server.register(MethodInfo::unary(
         protocol::method::READ_PARTITION,
         protocol::connection_binary_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&partition_manager, request, ctx)?;
             let partition = binary(request, "payload")?.to_vec();
             let reader = session
                 .with_connection(move |connection| connection.read_partition(&partition))
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(insert_reader_response(&session, reader)?))
+            Ok(Some(insert_reader_response(&session, reader, ctx)?))
         },
     ));
 }
@@ -485,7 +497,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::SET_STATEMENT_OPTION,
         protocol::statement_option_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&set_option_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?;
@@ -504,7 +516,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::GET_STATEMENT_OPTION,
         protocol::statement_option_key_schema(),
-        protocol::value_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&get_option_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?;
@@ -530,7 +542,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::SET_SQL_QUERY,
         protocol::set_sql_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&set_sql_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?;
@@ -546,7 +558,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::SET_SUBSTRAIT_PLAN,
         protocol::statement_binary_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&substrait_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?;
@@ -564,7 +576,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::PREPARE,
         protocol::statement_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&prepare_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?;
@@ -594,7 +606,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::CANCEL_STATEMENT,
         protocol::statement_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&cancel_manager, request, ctx)?;
             session
@@ -608,7 +620,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::EXECUTE,
         protocol::statement_schema(),
-        protocol::execute_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&execute_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?.to_string();
@@ -621,10 +633,12 @@ fn register_statement_operations(
             let (result_id, schema) = session
                 .insert_statement_result(&statement_id, reader)
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(
-                protocol::execute_response(&result_id, None, schema.as_ref())
-                    .map_err(protocol_rpc_error)?,
-            ))
+            Ok(Some(result_response(
+                &session,
+                &result_id,
+                schema.as_ref(),
+                response_limit(ctx),
+            )?))
         },
     ));
 
@@ -632,7 +646,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::EXECUTE_UPDATE,
         protocol::statement_schema(),
-        protocol::update_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&update_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?.to_string();
@@ -642,13 +656,9 @@ fn register_statement_operations(
             let affected = session
                 .with_statement(&statement_id, |statement| statement.execute_update())
                 .map_err(adbc_rpc_error)?;
-            Ok(Some(
-                RecordBatch::try_new(
-                    protocol::update_response_schema(),
-                    vec![Arc::new(Int64Array::from(vec![affected]))],
-                )
-                .map_err(arrow_rpc_error)?,
-            ))
+            Ok(Some(typed_response(protocol::UpdateResponse {
+                rows_affected: affected,
+            })?))
         },
     ));
 
@@ -656,7 +666,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::EXECUTE_SCHEMA,
         protocol::statement_schema(),
-        protocol::schema_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&schema_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?.to_string();
@@ -674,7 +684,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::GET_PARAMETER_SCHEMA,
         protocol::statement_schema(),
-        protocol::schema_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&parameter_schema_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?;
@@ -689,7 +699,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::EXECUTE_PARTITIONS,
         protocol::statement_schema(),
-        protocol::partitions_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&partitions_manager, request, ctx)?;
             let statement_id = string(request, "statement_id")?.to_string();
@@ -700,19 +710,11 @@ fn register_statement_operations(
                 .with_statement(&statement_id, |statement| statement.execute_partitions())
                 .map_err(adbc_rpc_error)?;
             let schema = protocol::encode_schema(&result.schema).map_err(protocol_rpc_error)?;
-            let partitions = serde_json::to_string(&result.partitions)
-                .map_err(|error| RpcError::runtime_error(error.to_string()))?;
-            Ok(Some(
-                RecordBatch::try_new(
-                    protocol::partitions_response_schema(),
-                    vec![
-                        Arc::new(Int64Array::from(vec![result.rows_affected])),
-                        Arc::new(BinaryArray::from_vec(vec![schema.as_slice()])),
-                        Arc::new(StringArray::from(vec![partitions])),
-                    ],
-                )
-                .map_err(arrow_rpc_error)?,
-            ))
+            Ok(Some(typed_response(protocol::PartitionsResponse {
+                rows_affected: result.rows_affected,
+                schema_ipc: protocol::Bytes(schema),
+                partitions: result.partitions.into_iter().map(protocol::Bytes).collect(),
+            })?))
         },
     ));
 
@@ -720,7 +722,7 @@ fn register_statement_operations(
     server.register(MethodInfo::unary(
         protocol::method::CLOSE_STATEMENT,
         protocol::statement_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&close_manager, request, ctx)?;
             session
@@ -736,7 +738,7 @@ fn register_result_operations(server: &mut RpcServer, manager: Arc<SessionManage
     server.register(MethodInfo::unary(
         protocol::method::CLOSE_RESULT,
         protocol::result_schema(),
-        protocol::empty_response_schema(),
+        protocol::unary_response_schema(),
         move |request, ctx| {
             let (session, _) = get_session(&close_manager, request, ctx)?;
             session
@@ -816,12 +818,13 @@ fn register_bind_exchange(
                     .map_err(adbc_rpc_error)?;
                 Ok(StreamResult::exchange(
                     protocol::empty_response_schema(),
-                    Arc::new(schema),
+                    protocol::bind_turn_schema(),
                     Box::new(BindExchange {
                         manager: handler_manager.clone(),
                         cursor: BindCursor {
                             session_id,
                             upload_id,
+                            max_bytes: max_bind_bytes,
                         },
                     }),
                 ))
@@ -834,28 +837,75 @@ fn register_bind_exchange(
 fn insert_reader_response(
     session: &crate::session::Session,
     reader: Box<dyn arrow_array::RecordBatchReader + Send + 'static>,
+    ctx: &CallContext,
 ) -> vgi_rpc::Result<RecordBatch> {
     let (result_id, schema) = session.insert_result(reader).map_err(adbc_rpc_error)?;
-    protocol::execute_response(&result_id, None, schema.as_ref()).map_err(protocol_rpc_error)
+    result_response(session, &result_id, schema.as_ref(), response_limit(ctx))
+}
+
+fn result_response(
+    session: &crate::session::Session,
+    result_id: &str,
+    schema: &arrow_schema::Schema,
+    limit: usize,
+) -> vgi_rpc::Result<RecordBatch> {
+    let response = protocol::encode_schema(schema)
+        .map(|schema_ipc| protocol::ExecuteResponse {
+            result_id: result_id.into(),
+            rows_affected: None,
+            schema_ipc: protocol::Bytes(schema_ipc),
+        })
+        .and_then(|value| bounded_response(value, limit));
+    if response.is_err() {
+        let _ = session.close_result(result_id);
+    }
+    response.map_err(protocol_rpc_error)
+}
+
+fn response_limit(ctx: &CallContext) -> usize {
+    ctx.response_limit_bytes
+        .unwrap_or(protocol::MAX_CONTROL_BYTES)
+        .min(protocol::MAX_CONTROL_BYTES)
+}
+
+fn handle_response<T: vgi_rpc::VgiArrow>(
+    value: T,
+    limit: usize,
+    cleanup: impl FnOnce(),
+) -> vgi_rpc::Result<RecordBatch> {
+    let response = bounded_response(value, limit);
+    if response.is_err() {
+        cleanup();
+    }
+    response.map_err(protocol_rpc_error)
+}
+
+fn bounded_response<T: vgi_rpc::VgiArrow>(
+    value: T,
+    limit: usize,
+) -> Result<RecordBatch, protocol::ProtocolError> {
+    let response = protocol::encode_response(value, limit)?;
+    // Check the complete outer IPC envelope as well as the nested record.
+    // The transport still owns its metadata and final response-size enforcement.
+    protocol::encode_batch_ipc(&response, limit)?;
+    Ok(response)
 }
 
 fn schema_response(schema: &arrow_schema::Schema) -> vgi_rpc::Result<RecordBatch> {
     let bytes = protocol::encode_schema(schema).map_err(protocol_rpc_error)?;
-    RecordBatch::try_new(
-        protocol::schema_response_schema(),
-        vec![Arc::new(BinaryArray::from_vec(vec![bytes.as_slice()]))],
-    )
-    .map_err(arrow_rpc_error)
+    typed_response(protocol::SchemaResponse {
+        schema_ipc: protocol::Bytes(bytes),
+    })
 }
 
 fn value_response(value: &OptionValue) -> vgi_rpc::Result<RecordBatch> {
-    let value = serde_json::to_string(&protocol::WireOptionValue::from(value))
-        .map_err(|error| RpcError::runtime_error(error.to_string()))?;
-    protocol::one_string(protocol::value_response_schema(), &value).map_err(arrow_rpc_error)
+    let value = protocol::WireOptionValue::from(value);
+    value.clone().into_adbc().map_err(protocol_rpc_error)?;
+    typed_response(protocol::ValueResponse { value })
 }
 
 fn decode_option_value(value: &str) -> vgi_rpc::Result<OptionValue> {
-    serde_json::from_str::<protocol::WireOptionValue>(value)
+    serde_json::from_str::<protocol::JsonOptionValue>(value)
         .map_err(|error| RpcError::value_error(format!("invalid option value: {error}")))?
         .into_adbc()
         .map_err(protocol_rpc_error)
@@ -871,12 +921,28 @@ fn get_session(
     request: &Request,
     ctx: &CallContext,
 ) -> vgi_rpc::Result<(Arc<crate::session::Session>, String)> {
+    validate_protocol_version(request)?;
     let principal = manager.principal(&ctx.auth)?;
     let session_id = string(request, "session_id")?.to_string();
     let session = manager
         .get(&session_id, &principal)
         .map_err(adbc_rpc_error)?;
     Ok((session, session_id))
+}
+
+fn validate_protocol_version(request: &Request) -> vgi_rpc::Result<()> {
+    let compatible = request
+        .metadata
+        .get("vgi_rpc.protocol_version")
+        .and_then(|version| version.strip_prefix("0.3."))
+        .is_some_and(|patch| !patch.is_empty() && patch.bytes().all(|byte| byte.is_ascii_digit()));
+    if compatible {
+        Ok(())
+    } else {
+        Err(RpcError::version_error(
+            "Grainlift requires an explicit 0.3.x protocol version",
+        ))
+    }
 }
 
 fn string<'a>(request: &'a Request, name: &str) -> vgi_rpc::Result<&'a str> {
@@ -888,6 +954,14 @@ fn binary<'a>(request: &'a Request, name: &str) -> vgi_rpc::Result<&'a [u8]> {
 }
 
 fn ok_batch() -> vgi_rpc::Result<RecordBatch> {
+    typed_response(protocol::OkResponse { ok: true })
+}
+
+fn typed_response<T: vgi_rpc::VgiArrow>(value: T) -> vgi_rpc::Result<RecordBatch> {
+    protocol::encode_response(value, protocol::MAX_CONTROL_BYTES).map_err(protocol_rpc_error)
+}
+
+fn bind_ack() -> vgi_rpc::Result<RecordBatch> {
     RecordBatch::try_new(
         protocol::empty_response_schema(),
         vec![Arc::new(BooleanArray::from(vec![true]))],
@@ -908,4 +982,39 @@ fn protocol_rpc_error(error: protocol::ProtocolError) -> RpcError {
 
 fn arrow_rpc_error(error: arrow_schema::ArrowError) -> RpcError {
     RpcError::new("ArrowError", error.to_string())
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn assert_cleanup_boundaries<T: vgi_rpc::VgiArrow + Clone>(value: T) {
+        let response = bounded_response(value.clone(), protocol::MAX_CONTROL_BYTES).unwrap();
+        let size = protocol::encode_batch_ipc(&response, protocol::MAX_CONTROL_BYTES)
+            .unwrap()
+            .len();
+        let cleaned = Cell::new(0);
+        assert!(
+            handle_response(value.clone(), size - 1, || cleaned.set(cleaned.get() + 1)).is_err()
+        );
+        assert_eq!(cleaned.get(), 1);
+        for limit in [size, size + 1] {
+            assert!(
+                handle_response(value.clone(), limit, || cleaned.set(cleaned.get() + 1)).is_ok()
+            );
+        }
+        assert_eq!(cleaned.get(), 1);
+    }
+
+    #[test]
+    fn session_and_statement_encoding_failures_reclaim_only_failed_handles() {
+        assert_cleanup_boundaries(protocol::SessionResponse {
+            session_id: "session".into(),
+        });
+        assert_cleanup_boundaries(protocol::StatementResponse {
+            session_id: "session".into(),
+            statement_id: "statement".into(),
+        });
+    }
 }

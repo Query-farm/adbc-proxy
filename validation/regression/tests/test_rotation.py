@@ -21,7 +21,7 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, ClassVar, Protocol
+from typing import ClassVar, Protocol
 from wsgiref.simple_server import make_server
 
 import adbc_driver_manager as manager
@@ -29,7 +29,7 @@ import httpx2
 import pyarrow as pa
 import pytest
 from grainlift import Service, TokenStore
-from vgi_rpc import AnnotatedBatch, ProducerState, RpcError, Stream
+from vgi_rpc import AnnotatedBatch, ArrowSerializableDataclass, ProducerState, RpcError, Stream
 from vgi_rpc.http import AuthenticationError, http_connect
 
 from .conftest import Harness, QuietHandler, ThreadedServer
@@ -37,32 +37,44 @@ from .worker import Plan, ProbeWorker
 
 pytestmark = pytest.mark.native
 
-# Independent schemas intentionally avoid importing the implementation protocol.
-OpenResult = Annotated[pa.RecordBatch, pa.schema([pa.field("session_id", pa.string(), nullable=False)])]
-StatementResult = Annotated[
-    pa.RecordBatch,
-    pa.schema(
-        [pa.field("session_id", pa.string(), nullable=False), pa.field("statement_id", pa.string(), nullable=False)]
-    ),
-]
-OkResult = Annotated[pa.RecordBatch, pa.schema([pa.field("ok", pa.bool_(), nullable=False)])]
-ExecuteResult = Annotated[
-    pa.RecordBatch,
-    pa.schema(
-        [
-            pa.field("result_id", pa.string(), nullable=False),
-            pa.field("rows_affected", pa.int64()),
-            pa.field("schema_ipc", pa.binary(), nullable=False),
-        ]
-    ),
-]
+
+# Independent response dataclasses intentionally avoid the implementation protocol.
+@dataclass
+class OpenResult(ArrowSerializableDataclass):
+    """Carry an authenticated session identifier."""
+
+    session_id: str
+
+
+@dataclass
+class StatementResult(ArrowSerializableDataclass):
+    """Carry a statement and its owning session."""
+
+    session_id: str
+    statement_id: str
+
+
+@dataclass
+class OkResult(ArrowSerializableDataclass):
+    """Acknowledge one completed operation."""
+
+    ok: bool
+
+
+@dataclass
+class ExecuteResult(ArrowSerializableDataclass):
+    """Describe a lazy result and its serialized Arrow schema."""
+
+    result_id: str
+    rows_affected: int | None
+    schema_ipc: bytes
 
 
 class Grainlift(Protocol):
     """Declare the independently checked subset of the public wire contract."""
 
     protocol_name: ClassVar[str] = "org.queryfarm.Grainlift.v1"
-    protocol_version: ClassVar[str] = "0.2.0"
+    protocol_version: ClassVar[str] = "0.3.0"
 
     def open_connection(self, target: str, database_options_json: str, connection_options_json: str) -> OpenResult:
         """Allocate an authenticated session."""
@@ -149,12 +161,12 @@ def start_stream(rpc: Grainlift) -> tuple[str, Iterator[AnnotatedBatch]]:
         Session handle and lazy three-batch stream iterator.
     """
     opened = rpc.open_connection(target="regression", database_options_json="[]", connection_options_json="[]")
-    session_id = str(opened.column("session_id")[0].as_py())
+    session_id = opened.session_id
     statement = rpc.new_statement(session_id=session_id)
-    statement_id = str(statement.column("statement_id")[0].as_py())
+    statement_id = statement.statement_id
     rpc.set_sql_query(session_id=session_id, statement_id=statement_id, sql="SELECT rotation")
     executed = rpc.execute(session_id=session_id, statement_id=statement_id)
-    result_id = str(executed.column("result_id")[0].as_py())
+    result_id = executed.result_id
     return session_id, iter(rpc.read_result(session_id=session_id, result_id=result_id, sequence=0))
 
 

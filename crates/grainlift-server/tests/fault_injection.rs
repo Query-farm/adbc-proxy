@@ -35,6 +35,7 @@ use vgi_rpc_client::http::{HttpClient, HttpClientBuilder};
 
 #[derive(Default)]
 struct FaultState {
+    schema_metadata_bytes: AtomicUsize,
     connection_cancels: AtomicUsize,
     statement_cancels: AtomicUsize,
     connection_drops: AtomicUsize,
@@ -122,6 +123,9 @@ impl BackendConnection for FaultConnection {
         &self,
         _codes: Option<HashSet<InfoCode>>,
     ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        if self.state.schema_metadata_bytes.load(Ordering::SeqCst) > 0 {
+            return Ok(Box::new(FaultReader::large_schema(Arc::clone(&self.state))));
+        }
         unsupported()
     }
 
@@ -237,6 +241,9 @@ impl BackendStatement for FaultStatement {
         if let Some(error) = self.state.execute_error.lock().unwrap().clone() {
             return Err(error);
         }
+        if self.state.schema_metadata_bytes.load(Ordering::SeqCst) > 0 {
+            return Ok(Box::new(FaultReader::large_schema(Arc::clone(&self.state))));
+        }
         Ok(Box::new(FaultReader::batches(
             Arc::clone(&self.state),
             [1, 2],
@@ -304,6 +311,19 @@ struct FaultReader {
 }
 
 impl FaultReader {
+    fn large_schema(state: Arc<FaultState>) -> Self {
+        let size = state.schema_metadata_bytes.load(Ordering::SeqCst);
+        Self {
+            state,
+            schema: Arc::new(
+                value_schema()
+                    .as_ref()
+                    .clone()
+                    .with_metadata(HashMap::from([("large".into(), "x".repeat(size))])),
+            ),
+            script: ReaderScript::Batches(VecDeque::new()),
+        }
+    }
     fn batches(state: Arc<FaultState>, values: impl IntoIterator<Item = i64>) -> Self {
         let schema = value_schema();
         let batches = values
@@ -552,6 +572,78 @@ fn wire_error(error: vgi_rpc::RpcError) -> protocol::WireAdbcError {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn incompatible_or_missing_versions_cannot_allocate_sessions() {
+    let state = Arc::new(FaultState::default());
+    let manager = manager(state, Duration::from_secs(60), false);
+    let (endpoint, server) =
+        start_server(Arc::clone(&manager), Duration::from_secs(1), false).await;
+    tokio::task::spawn_blocking(move || {
+        let request = RecordBatch::try_new(
+            protocol::open_connection_schema(),
+            vec![
+                Arc::new(StringArray::from(vec!["fault"])),
+                Arc::new(StringArray::from(vec!["[]"])),
+                Arc::new(StringArray::from(vec!["[]"])),
+            ],
+        )
+        .unwrap();
+        for version in [
+            None,
+            Some("0.2.0"),
+            Some("0.3."),
+            Some("0.3.invalid"),
+            Some("0.4.0"),
+        ] {
+            let mut builder =
+                HttpClient::connect(endpoint.clone()).protocol(protocol::PROTOCOL_NAME);
+            if let Some(version) = version {
+                builder = builder.protocol_version(version);
+            }
+            let error = builder
+                .build()
+                .unwrap()
+                .call_unary(protocol::method::OPEN_CONNECTION, &request, None)
+                .unwrap_err();
+            assert_eq!(error.error_type, "VersionError", "{error}");
+            assert_eq!(
+                manager.resource_counts().unwrap(),
+                ResourceCounts::default()
+            );
+        }
+        let mut client = HttpClient::connect(endpoint.clone())
+            .protocol(protocol::PROTOCOL_NAME)
+            .protocol_version("0.3.1")
+            .build()
+            .unwrap();
+        let (response, _) = client
+            .call_unary(protocol::method::OPEN_CONNECTION, &request, None)
+            .unwrap();
+        let response: protocol::SessionResponse =
+            protocol::decode_response(&response, protocol::MAX_CONTROL_BYTES).unwrap();
+        assert!(!response.session_id.is_empty());
+        assert_eq!(manager.resource_counts().unwrap().sessions, 1);
+        let mut old = HttpClient::connect(endpoint)
+            .protocol(protocol::PROTOCOL_NAME)
+            .protocol_version("0.2.0")
+            .build()
+            .unwrap();
+        let error = old
+            .call_unary(
+                protocol::method::CLOSE_CONNECTION,
+                &session_request(&response.session_id),
+                None,
+            )
+            .unwrap_err();
+        assert_eq!(error.error_type, "VersionError");
+        assert_eq!(manager.resource_counts().unwrap().sessions, 1);
+        manager.close_all().unwrap();
+    })
+    .await
+    .unwrap();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stream_cancel_reclaims_only_the_result_and_abandonment_uses_lease_cleanup() {
     let state = Arc::new(FaultState::default());
     // Leave enough wall-clock headroom for TCP setup and a contended CI host;
@@ -620,6 +712,55 @@ async fn stream_cancel_reclaims_only_the_result_and_abandonment_uses_lease_clean
     );
     wait_until(|| state.reader_drops.load(Ordering::SeqCst) == 2);
     assert_eq!(state.reader_drops.load(Ordering::SeqCst), 2);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_typed_result_response_reclaims_query_and_metadata_cursors() {
+    let state = Arc::new(FaultState::default());
+    state
+        .schema_metadata_bytes
+        .store(128 * 1024, Ordering::SeqCst);
+    let manager = manager(Arc::clone(&state), Duration::from_secs(60), false);
+    let (session_id, statement_id) = open_session(&manager, "\0anonymous");
+    let (endpoint, server) =
+        start_server(Arc::clone(&manager), Duration::from_secs(1), false).await;
+    tokio::task::spawn_blocking(move || {
+        let mut client = HttpClient::connect(endpoint)
+            .protocol(protocol::PROTOCOL_NAME)
+            .protocol_version(protocol::PROTOCOL_VERSION)
+            .accepted_max_response_bytes(65536)
+            .build()
+            .unwrap();
+        let execute = statement_request(&session_id, &statement_id);
+        let metadata = RecordBatch::try_new(
+            protocol::connection_args_schema(),
+            vec![
+                Arc::new(StringArray::from(vec![session_id.as_str()])),
+                Arc::new(StringArray::from(vec!["{\"codes\":null}"])),
+            ],
+        )
+        .unwrap();
+        for (method, request) in [
+            (protocol::method::EXECUTE, &execute),
+            (protocol::method::GET_INFO, &metadata),
+        ] {
+            assert!(client.call_unary(method, request, None).is_err());
+            assert_eq!(manager.resource_counts().unwrap().results, 0);
+        }
+        assert_eq!(state.reader_drops.load(Ordering::SeqCst), 2);
+        state.schema_metadata_bytes.store(0, Ordering::SeqCst);
+        let (response, _) = client
+            .call_unary(protocol::method::EXECUTE, &execute, None)
+            .unwrap();
+        let response: protocol::ExecuteResponse =
+            protocol::decode_response(&response, 65536).unwrap();
+        assert!(!response.result_id.is_empty());
+        assert_eq!(manager.resource_counts().unwrap().results, 1);
+        manager.close_all().unwrap();
+    })
+    .await
+    .unwrap();
     server.abort();
 }
 

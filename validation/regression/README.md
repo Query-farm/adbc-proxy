@@ -32,11 +32,11 @@ metadata, partition and Substrait hooks.
 
 ## Run
 
-Requires Python 3.13+, uv, Rust 1.97+, and sibling grainlift-python and vgi-rpc
-checkouts. VGI-RPC must include explicit RecordBatch return schemas, raw structured
-errors and empty-schema exchange direction (revision d0ee383 or newer). Source
-repositories are public; compatible package-index releases remain pending. The
-path overrides in pyproject.toml are deliberate.
+Requires Python 3.13+, uv, Rust 1.97+, and the sibling grainlift-python checkout.
+VGI-RPC resolves from the package index; no transport checkout or custom runtime
+patch is required. Protocol 0.3 uses typed response records and uncompressed
+nested IPC, with compression handled by the transport. The toolkit path override
+in pyproject.toml is deliberate.
 
 From the Grainlift repository:
 

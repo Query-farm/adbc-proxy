@@ -32,7 +32,7 @@ use adbc_driver_grainlift::{
 };
 use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator, RecordBatchReader, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema};
-use grainlift_protocol::{WireOption, WireOptionValue};
+use grainlift_protocol::{JsonOptionValue, WireOption};
 use grainlift_server::backend::{Backend, BackendConnection, BackendStatement};
 use grainlift_server::config::TargetConfig;
 use grainlift_server::service::build_server;
@@ -298,7 +298,7 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
             database_options: Vec::new(),
             connection_options: vec![WireOption {
                 key: "server.fixed".into(),
-                value: WireOptionValue::String("server-value".into()),
+                value: JsonOptionValue::String("server-value".into()),
             }],
             allow_client_database_options: false,
             allow_client_connection_options: false,

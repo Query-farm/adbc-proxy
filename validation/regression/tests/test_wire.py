@@ -27,6 +27,46 @@ from grainlift import Service
 from .worker import ProbeWorker
 
 PROTOCOL = "org.queryfarm.Grainlift.v1"
+UNARY_SCHEMA = pa.schema([pa.field("result", pa.binary(), nullable=False)])
+OPTION_TYPE = pa.struct(
+    [
+        pa.field("kind", pa.string(), nullable=False),
+        pa.field("string_value", pa.string()),
+        pa.field("bytes_value", pa.binary()),
+        pa.field("int_value", pa.int64()),
+        pa.field("double_value", pa.float64()),
+    ]
+)
+
+
+def decode_reply(response: falcon.testing.Result, expected: pa.Schema | None = None) -> pa.RecordBatch:
+    """Validate the stock VGI binary envelope and decode exactly one typed response row."""
+    assert response.status_code == 200
+    with pa.ipc.open_stream(response.content) as reader:
+        assert reader.schema.equals(UNARY_SCHEMA, check_metadata=True)
+        outer = list(reader)
+    assert len(outer) == 1 and outer[0].num_rows == 1
+    payload = outer[0].column("result")[0].as_py()
+    assert isinstance(payload, bytes)
+    with pa.ipc.open_stream(payload) as reader:
+        if expected is not None:
+            assert reader.schema.equals(expected, check_metadata=True)
+        inner = list(reader)
+    assert len(inner) == 1 and inner[0].num_rows == 1
+    return inner[0]
+
+
+def decode_error(response: falcon.testing.Result) -> dict[str, object]:
+    """Decode Grainlift's structured error behind the stock exception-type prefix."""
+    assert response.status_code == 200
+    _, metadata = pa.ipc.open_stream(response.content).read_next_batch_with_custom_metadata()
+    assert metadata is not None
+    assert metadata[b"vgi_rpc.log_level"] == b"EXCEPTION"
+    message = metadata[b"vgi_rpc.log_message"]
+    assert message.startswith(b"AdbcError: ")
+    assert json.loads(metadata[b"vgi_rpc.log_extra"])["exception_type"] == "AdbcError"
+    error: dict[str, object] = json.loads(message.removeprefix(b"AdbcError: "))
+    return error
 
 
 @dataclass
@@ -59,7 +99,7 @@ class Wire:
                 custom_metadata={
                     "vgi_rpc.method": method,
                     "vgi_rpc.protocol": PROTOCOL,
-                    "vgi_rpc.protocol_version": "0.2.0",
+                    "vgi_rpc.protocol_version": "0.3.0",
                     "vgi_rpc.request_version": "1",
                 },
             )
@@ -75,9 +115,8 @@ class Wire:
             "open_connection", {"target": "regression", "database_options_json": "[]", "connection_options_json": "[]"}
         )
         assert response.status_code == 200
-        reader = pa.ipc.open_stream(response.content)
-        assert reader.schema.equals(pa.schema([pa.field("session_id", pa.string(), nullable=False)]))
-        return str(reader.read_next_batch().column(0)[0].as_py())
+        batch = decode_reply(response, pa.schema([pa.field("session_id", pa.string(), nullable=False)]))
+        return str(batch.column(0)[0].as_py())
 
 
 @pytest.fixture
@@ -112,23 +151,18 @@ def test_wire_principal_isolation(wire: Wire, worker: ProbeWorker, method: str) 
     response = wire.call(method, {"session_id": sid}, token="bob-token")
     # VGI-RPC carries application errors inside a successful Arrow response.
     assert response.status_code == 200
-    _, metadata = pa.ipc.open_stream(response.content).read_next_batch_with_custom_metadata()
-    assert metadata[b"vgi_rpc.log_level"] == b"EXCEPTION"
-    assert json.loads(metadata[b"vgi_rpc.log_message"])["status"] == "not_found"
+    assert decode_error(response)["status"] == "not_found"
     assert not worker.connections[0].closed
 
 
-def test_wire_error_payload_is_raw_json(wire: Wire) -> None:
-    """Preserve machine-readable ADBC errors without a prefixed exception name."""
+def test_wire_error_payload_uses_stock_exception_prefix(wire: Wire) -> None:
+    """Preserve machine-readable ADBC errors within the stock VGI exception message."""
     sid = wire.open()
     response = wire.call("commit", {"session_id": sid})
     assert response.status_code == 200
-    _, metadata = pa.ipc.open_stream(response.content).read_next_batch_with_custom_metadata()
-    assert metadata[b"vgi_rpc.log_level"] == b"EXCEPTION"
-    error = json.loads(metadata[b"vgi_rpc.log_message"])
+    error = decode_error(response)
     assert error["status"] == "not_implemented"
     assert error["sqlstate"] == [48, 48, 48, 48, 48]
-    assert json.loads(metadata[b"vgi_rpc.log_extra"])["exception_type"] == "AdbcError"
 
 
 def test_wire_unknown_target_does_not_allocate(wire: Wire, worker: ProbeWorker) -> None:
@@ -137,7 +171,5 @@ def test_wire_unknown_target_does_not_allocate(wire: Wire, worker: ProbeWorker) 
         "open_connection", {"target": "missing", "database_options_json": "[]", "connection_options_json": "[]"}
     )
     assert response.status_code == 200
-    _, metadata = pa.ipc.open_stream(response.content).read_next_batch_with_custom_metadata()
-    assert metadata[b"vgi_rpc.log_level"] == b"EXCEPTION"
-    assert json.loads(metadata[b"vgi_rpc.log_message"])["status"] == "not_found"
+    assert decode_error(response)["status"] == "not_found"
     assert not worker.connections

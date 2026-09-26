@@ -372,7 +372,7 @@ impl BackendStatement for ManagerStatement {
 mod tests {
     use adbc_core::error::Status;
     use adbc_core::options::OptionValue;
-    use grainlift_protocol::{WireOption, WireOptionValue};
+    use grainlift_protocol::{JsonOptionValue, WireOption};
 
     use super::merge_options;
     use crate::config::TargetConfig;
@@ -383,7 +383,7 @@ mod tests {
             entrypoint: None,
             database_options: vec![WireOption {
                 key: "password".into(),
-                value: WireOptionValue::String("server-secret".into()),
+                value: JsonOptionValue::String("server-secret".into()),
             }],
             connection_options: Vec::new(),
             allow_client_database_options: false,

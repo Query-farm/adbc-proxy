@@ -1,0 +1,37 @@
+{
+  "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+  "python": "Python 3.14.7",
+  "manifest_sha256": "c83453ee6113d6d949fa1d8e84a889c57f531641cf69f9b55e54e052f23aacbd",
+  "driver_sha256": "91d86ac7293d3587ed0f626b9ad1a8da9575bccf29a1e0c4266015e8a57f8791",
+  "suites": {
+    "toolkit": {
+      "tests": 446,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "hello": {
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "regression": {
+      "tests": 150,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "source_imports": false,
+  "toolkit_quality": [
+    "ruff",
+    "ruff-format",
+    "strict-mypy",
+    "isolated-pydoclint"
+  ],
+  "transport": {
+    "requirement": "vgi-rpc[http]==0.47.1",
+    "source": "package-index"
+  }
+}

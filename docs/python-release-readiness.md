@@ -27,9 +27,9 @@ The SDK exposes every Grainlift protocol 0.4.0 operation; each backend implement
 the capabilities it supports. This does not imply transparent multi-replica use.
 
 The [typed protocol migration](typed-protocol.md) changes the wire contract and
-restores compatibility with published VGI-RPC 0.47.1. The candidate v4 results
-below describe protocol 0.2 and do not validate these new source changes. A new
-installed-package candidate and runtime matrix are required before release.
+restores compatibility with published VGI-RPC 0.47.1. Historical candidate v4
+results describe protocol 0.2 and do not validate the current protocol. Candidate
+v6 pairs the 0.4 SDK with the matching native driver.
 
 Historical protocol 0.3 source validation: 344 SDK tests, 138 native Python
 regression tests and 13 hello-world tests pass using registry VGI-RPC 0.47.1.
@@ -56,6 +56,9 @@ passes all four Linux/macOS and Python 3.13/3.14 jobs. Its initial predecessor
 failed on Python 3.13's eager evaluation of an Arrow generic annotation; deferred
 annotations correct that issue. Direct public C-ABI tests exercise metadata
 distinctions that the current Python driver-manager wrapper normalizes or drops.
+The release workspace build and external SQLite C-ABI smoke tests pass over
+HTTP, TCP, mTLS and Iroh. HTTP SQLite Foundry passes 164 tests, skips 167 and
+reports three expected failures for downstream limitations.
 
 The original candidate v2 validated the query-only SDK. The new operation surface
 adds transactions, preparation, binding, ingestion, metadata/statistics, partitions,
@@ -66,20 +69,31 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 | Gate | Current evidence | Status |
 |---|---|---|
 | SDK code quality | Ruff, format, strict mypy and isolated pydoclint across SDK source/tests; `py.typed` included | Passed locally |
-| ADBC operation surface | All 31 wire methods routed; 283 SDK tests and 130 native regression tests; direct/isolated transaction, binding, ingestion and metadata coverage | Passed locally; SDK wheel CI passed all four platform/interpreter jobs |
+| ADBC operation surface | All 31 wire methods routed; 446 SDK tests and 150 native regression tests; direct/isolated transaction, binding, ingestion and metadata coverage | Passed locally; SDK wheel CI passed all four platform/interpreter jobs |
 | Native failure behavior | Deadlines, crashes, statement/connection cancellation, raw release, client death, shutdown and recovery in independent processes | Passed locally |
 | Credential rotation | Atomic replacement, overlap/revocation, principal ownership and signed continuations | Passed locally |
-| Reproducible packaging | Exact hashed wheels and dependency closure; all three wheels rebuild byte-for-byte from sdists; forbidden payload checks | Passed locally |
-| Fresh installation | Candidate v4: 440 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
+| Reproducible packaging | Exact hashed wheels and dependency closure; both local wheels rebuild byte-for-byte from sdists; stock registry VGI-RPC; forbidden payload checks | Passed locally |
+| Fresh installation | Candidate v6: 609 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
 | Load and cleanup | Eight clients, 180/300-second native Waitress runs, injected errors and connection churn; no unexpected errors, child or descriptor leak observed | Measured; memory/long-duration gate remains open |
 | TLS edge | Real Caddy/Waitress HTTPS, certificate/hostname failures, verified Python RPC, authentication, limits, logs and draining | Passed locally; native HTTPS success remains unverified |
-| Runtime CI | SDK, hello-world and combined candidate v4 matrices passed Linux/macOS × Python 3.13/3.14; v4 includes the synchronized timeout regression | Passed remotely |
-| Publication | Public source repositories and candidate v4 prerelease available; package-index releases remain separate | PyPI release versions/dependency floors pending |
+| Runtime CI | SDK 0.4 matrix passed Linux/macOS × Python 3.13/3.14; matching combined candidate v6 and hello-world results are tracked separately | Combined v6 matrix pending |
+| Publication | Public source repositories; candidate v6 built and validated locally; package-index releases remain separate | PyPI release versions/dependency floors pending |
 | Native ARM64 packaging | Separate Custom Test image pull returned registry `denied`; fallback Docker driver rejected a multi-platform build before compilation | Packaging infrastructure gate remains open |
 | Target operations | Resource quotas, affinity, credential rotation and supervisor/shutdown contract documented | Real deployment/cgroup, certificate renewal and signal checks pending |
 
 ## Defects fixed during the gates
 
+- JSON control payloads and positional partition claims concealed typed fields.
+  Protocol 0.4 declares named records with exact schema and value validation.
+- Native partition descriptors were not principal-bound. Signed claims now bind
+  them to the target, principal, process secret and expiry, including across
+  sessions of the same principal.
+- Python schema execution retained earlier results; it now invalidates them
+  before the backend callback, including when that callback fails.
+- JSON-era option handling rejected IEEE754 special values. Typed double options
+  now preserve NaN, infinities and signed zero through direct and isolated paths.
+- Malformed error fields and invalid affected-row counts are rejected rather
+  than silently normalized.
 - VGI-RPC mistook zero-column bidirectional parameter exchanges for output-only
   producers. Candidate v4 patched explicit exchange direction; protocol 0.3 uses
   a fixed nonempty binding envelope and works with the published transport.
@@ -100,7 +114,13 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 
 ## Reviewable release artifact
 
-[Candidate v4](../validation/release-results/candidate-v4/README.md) is the current
+[Candidate v6](../validation/release-results/candidate-v6/README.md) validates
+the current protocol 0.4 in fresh environments: 609 tests per interpreter, no
+failures or skips, with both local wheels reproduced from their sdists. Archive
+SHA-256: `63692d5a6fb81208fdf468dd9e225e04646b33bf2dd5fee4978ccac3da8c3f3e`.
+Remote combined runtime results are tracked separately from this local evidence.
+
+[Candidate v4](../validation/release-results/candidate-v4/README.md) is a historical
 [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v4),
 archive SHA-256 `3fe5170b7fcd44eead68d995b4a2ee04900d6c580438d69aa2231b30f4d9f4ee`.
 Its wheels and dependency locks are byte-identical to v3; only the native timeout

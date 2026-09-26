@@ -19,8 +19,10 @@ limitations under the License.
 
 [Candidate v2 evidence](release-results/candidate-v2/README.md) records two
 successful fresh-environment runs: 240 tests on each of Python 3.13.12 and
-3.14.7, plus SDK quality gates. These runs used macOS arm64; the configured CI
-matrix has not yet run.
+3.14.7, plus SDK quality gates. These runs used macOS arm64; candidate v2 later
+passed the [Linux/macOS runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36218130106).
+That historical candidate covers the query-only SDK. The expanded ADBC operation
+surface must be built and validated as a new candidate.
 
 `release_bundle.py` builds the current VGI-RPC transport, Python toolkit, and
 hello-world example as wheels and source distributions. It rebuilds every wheel

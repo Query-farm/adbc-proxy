@@ -25,15 +25,18 @@ with an independently implemented server.
 
 It complements the Rust server tests and the existing Foundry/downstream tests;
 it does not validate the Rust proxy server by substituting a Python worker.
-Only HTTP is covered here. TCP, mTLS, Iroh, transactions, binding, and downstream
-cancellation still need the existing validation paths.
+Only HTTP is covered here. TCP, mTLS, Iroh and real downstream-driver cancellation
+still need the existing validation paths. A second fixture uses SQLite for real
+transaction, preparation, parameter and ingestion semantics, alongside controlled
+metadata, partition and Substrait hooks.
 
 ## Run
 
 Requires Python 3.13+, uv, Rust 1.97+, and sibling grainlift-python and vgi-rpc
-checkouts from the initial toolkit work. VGI-RPC must include the explicit
-RecordBatch return-schema and raw structured-error fixes. These dependencies are
-unpublished; the path overrides in pyproject.toml are deliberate.
+checkouts. VGI-RPC must include explicit RecordBatch return schemas, raw structured
+errors and empty-schema exchange direction (revision d0ee383 or newer). Source
+repositories are public; compatible package-index releases remain pending. The
+path overrides in pyproject.toml are deliberate.
 
 From the Grainlift repository:
 
@@ -57,6 +60,13 @@ iterators must close at teardown.
 
 ## Coverage
 
+- Direct and isolated workers: commit/rollback and autocommit, independent prepared
+  statements, batch/stream parameters, replacement and rejected-binding recovery,
+  updates, all four ingestion modes, dictionaries and temporary tables.
+- All four typed option kinds, initial/configured option authority, discovery and
+  statistics with independent standard Arrow schemas and filter/depth checks.
+- Partition execution/read, same-principal connection transfer, owner/tamper
+  rejection, unknown row counts, and exact Substrait plan delegation.
 - Integer extremes, floating point, booleans, Unicode, binary values, decimals,
   timestamps, lists, structs, dictionaries, nulls, and Arrow metadata.
 - Empty results, empty intermediate batches, batch boundaries, schema inference,
@@ -94,10 +104,10 @@ regression runtime, and tool failures do not silently skip the gate.
 
 CI checks lint, types and docstrings without requiring unpublished repositories.
 A Linux/macOS Python 3.13/3.14 runtime matrix can consume an explicitly hashed
-wheel candidate; see [release configuration](../RELEASE.md). Artifact hosting
-and repository-variable configuration remain external steps, so configured jobs
-are not evidence of a completed remote run.
+wheel candidate; see [release configuration](../RELEASE.md). Candidate v2 completed
+that matrix for the earlier query-only implementation; each new candidate must
+pass the matrix independently.
 
-See [local verification](VALIDATION.md) for 74 passing cases, including isolated
-worker failures and credential rotation. The separate [soak](soak/README.md) and
+See [local verification](VALIDATION.md) for 130 passing cases, including the ADBC
+operation surface, isolated worker failures and credential rotation. The separate [soak](soak/README.md) and
 [TLS-edge gate](deployment/README.md) cover load and deployment behavior.

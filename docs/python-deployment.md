@@ -20,13 +20,17 @@ limitations under the License.
 
 # Deploying a Python-authored Grainlift service
 
-The initial production scope is authenticated HTTP(S), a single owning service
-process per endpoint, autocommit query execution, schema inference, and pull-based
-Arrow results. Use the ordinary Grainlift ADBC driver on clients. Python workers
-do not implement transactions, prepare/bind, ingestion, metadata discovery,
-partitioned results, or TCP/mTLS/Iroh serving. Unsupported ADBC operations return
-NOT_IMPLEMENTED. The native ADBC error vendor-code sentinel limitation remains;
-status, SQLSTATE and binary details have separate regression coverage.
+The Python toolkit exposes the Grainlift ADBC operation surface over authenticated
+HTTP(S): transactions, preparation, batch/stream binding, updates and ingestion,
+metadata and statistics, partitioned results, typed options, and Substrait plans.
+Use the ordinary Grainlift ADBC driver on clients. Workers implement database
+semantics through connection and statement hooks; unsupported backend capabilities
+return NOT_IMPLEMENTED. Legacy query-only workers still require autocommit.
+See the [worker API contract](https://github.com/Query-farm/grainlift-python/blob/main/docs/API.md).
+Python serving remains HTTP-only, with one owning service process per endpoint;
+TCP/mTLS/Iroh serving is outside this SDK's scope. The native ADBC error vendor-code
+sentinel limitation remains; status, SQLSTATE and binary details have separate
+regression coverage.
 
 Python 3.13 and 3.14 on macOS have local wheel-install/runtime evidence. Linux
 and macOS are the configured release-CI targets; a configured matrix is not a
@@ -113,6 +117,25 @@ actual worker. The local soak used eight clients, at most ten sessions, sixteen
 Waitress threads, 2 MiB request/IPC limits, 1 MiB batch limits, 15-second worker
 startup and five-second worker operation deadlines. Those are test settings,
 not a universal capacity recommendation.
+
+Bound temporary storage as well as memory. Parameter uploads spool Arrow IPC to
+anonymous temporary files, capped at 64 MiB per binding by default. A statement
+may retain its completed binding and one pending replacement, each separately
+capped. Isolated workers use another bounded spool in the child process. Size the
+temporary filesystem for the configured session/statement concurrency and enforce
+an OS quota. Interrupted uploads expire; statement/session close releases files.
+Query, metadata and partition readers share a default quota of 32 live result
+handles per session. Partition execution allows at most 1,024 descriptors, with
+a separate serialized response limit.
+
+Pass authoritative backend configuration through `Service(database_options=...,
+connection_options=...)`. Caller attempts to supply or mutate any configured key
+are rejected, including attempts through the other option scope. The backend's
+`Worker.open_connection` receives the merged, validated options. Partition
+wrappers are signed for the service, target and principal and expire after the
+configured idle lifetime. The same principal may read them from another connection
+on that service; the backend determines whether the underlying snapshot survives
+the original connection or transaction.
 
 Place the host and every worker in the same supervised resource group. Apply
 memory, CPU and process-count limits to that group. SDK quotas bound transferred

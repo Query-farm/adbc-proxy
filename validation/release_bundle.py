@@ -228,7 +228,8 @@ def build(output: Path, python: str) -> None:
         shutil.copytree(ROOT / "validation/regression" / directory, bundle / "regression" / directory, ignore=ignored)
     shutil.copy(ROOT / "validation/regression/pyproject.toml", bundle / "regression/pyproject.toml")
     (bundle / "transport/tests").mkdir(parents=True)
-    shutil.copy(ROOT.parent / "vgi-rpc/tests/test_unary_record_batch.py", bundle / "transport/tests")
+    for test_file in ("test_unary_record_batch.py", "test_empty_exchange.py"):
+        shutil.copy(ROOT.parent / "vgi-rpc/tests" / test_file, bundle / "transport/tests")
     if any(forbidden_artifact_path(str(path.relative_to(bundle))) for path in bundle.rglob("*")):
         raise RuntimeError("Candidate contains local workspace or credential files")
     manifest = {

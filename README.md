@@ -371,6 +371,13 @@ the native ADBC client against a deterministic Python worker. Run
 `./validation/run_regression.sh` for its Python quality gates and HTTP integration
 tests. It requires the sibling development toolkit and VGI-RPC checkouts.
 
+The [Python worker toolkit](https://github.com/Query-farm/grainlift-python) exposes
+transactions, prepared statements, parameter batches/streams, ingestion, metadata,
+statistics, partitions, typed options and Substrait hooks over HTTP. Backends supply
+database semantics. The regression suite exercises those hooks with direct and
+isolated workers, including real SQLite transactions and ingestion; see the
+[API contract](https://github.com/Query-farm/grainlift-python/blob/main/docs/API.md).
+
 The [Python toolkit hardening record](validation/hardening/README.md) documents
 the applied SDK patch, passing native regression tests, and remaining release gates.
 

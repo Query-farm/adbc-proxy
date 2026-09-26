@@ -36,6 +36,14 @@ assert cleanup as well as returned data. Preserve status, SQLSTATE and binary
 details when asserting errors; document native limitations rather than hiding
 them behind broad expected failures.
 
+`feature_worker.py` adds real SQLite transaction, preparation, parameter and
+ingestion behavior. Its metadata uses independent ADBC standard Arrow schemas in
+`feature_schemas.py`. Direct and isolated native cases cover all operation hooks,
+including typed options, statistics, partition ownership and Substrait delegation.
+Wire oracle cases compare responses against independently declared schemas rather
+than importing the implementation's schema constants. Substrait fixtures verify
+opaque plan transport; they do not constitute a general Substrait engine.
+
 The Python server is an independent implementation of the Grainlift wire
 contract. Passing its tests does not prove Rust server authorization, downstream
 driver correctness, TCP/mTLS/Iroh behavior, load performance, or multi-replica

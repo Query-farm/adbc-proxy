@@ -17,7 +17,24 @@ limitations under the License.
 
 # Local verification — 2026-09-26
 
-## Current release-candidate evidence
+## ADBC operation coverage
+
+The expanded source suite passed **130 tests in 29.92 seconds** against the native
+C ABI on macOS. Its 56 new cases cover direct and isolated workers: real SQLite
+commit/rollback, prepared parameters, batch/stream binding and rejected replacement
+recovery, ingestion modes and temporary tables, independent statements, typed
+options, discovery/statistics filters, partition ownership and connection transfer,
+unknown row counts, zero-row/zero-column binding and Substrait plan delegation. Independent wire oracles verify
+standard response and metadata schemas. Ruff/format, strict mypy and isolated
+pydoclint passed for the expanded suite.
+
+This is source-checkout evidence. Fresh installed-package and remote CI evidence
+must identify the new candidate separately from the historical query-only v2 below.
+The SDK exposes backend hooks, not generic database behavior: SQLite is the real
+transaction/ingestion backend here, while metadata, partitions and Substrait use
+controlled fixture capabilities.
+
+## Historical query-only candidate v2
 
 The [exact wheel candidate](../release-results/candidate-v2/README.md) passed
 **74 regression cases on both Python 3.13.12 and 3.14.7**, installed into fresh
@@ -38,9 +55,10 @@ continuations. A revoked credential cannot advance a cursor or transfer ownershi
 The [Waitress soak](soak/README.md) and [Caddy TLS-edge validation](deployment/README.md)
 have separate machine-readable evidence under `validation/load-results/` and are
 summarized in [RESULTS.md](../RESULTS.md). The configured Linux/macOS runtime CI
-matrix has not run remotely: the reviewed artifact still needs hosting and CI
-configuration. No package was published. Local macOS results do not establish
-Linux behavior, native HTTPS success with a custom CA, or production capacity.
+matrix subsequently [passed remotely](https://github.com/Query-farm/grainlift/actions/runs/36218130106)
+using the [published GitHub candidate v2](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v2).
+No package-index release was published. These results do not establish native
+HTTPS success with a custom CA or production capacity.
 
 ## Original integration run and defects found
 

@@ -41,6 +41,13 @@ that grows with query count. Samples are capped by the maximum one-hour run and
 one-second sampling interval. Client count, batch size, payload and result rows
 are bounded and validated before starting the host.
 
+During worker churn, Linux procfs may deny a child measurement while it exits.
+The sampler records `unreadable_descendants` on that sample and counts
+`incomplete_descendant_samples` in the report instead of aborting the workload.
+Such child RSS/descriptor totals, including the observed peak RSS, are lower
+bounds; inspect these flags before making memory claims. Unreadable host
+measurements still fail the harness. Cleanup continues to require zero children.
+
 The pass flag requires zero unexpected errors, progress by every client, Jain
 fairness at least 0.8, unchanged SDK sources during the run, graceful host exit,
 zero remaining descendants after recovery, and parent descriptor return within

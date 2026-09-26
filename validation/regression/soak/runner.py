@@ -241,12 +241,20 @@ def _sample(process: psutil.Process, elapsed: float) -> dict[str, int | float]:
     children = process.children(recursive=True)
     child_rss = 0
     child_fds = 0
+    unreadable_children = 0
     for child in children:
         try:
-            child_rss += child.memory_info().rss
-            child_fds += _descriptors(child)
+            rss = child.memory_info().rss
+            descriptors = _descriptors(child)
         except psutil.NoSuchProcess:
             continue
+        except psutil.AccessDenied:
+            # Linux procfs can deny access while a worker exits. Keep the
+            # workload running, but mark this sample's totals as incomplete.
+            unreadable_children += 1
+            continue
+        child_rss += rss
+        child_fds += descriptors
     return {
         "seconds": round(elapsed, 3),
         "server_rss_bytes": process.memory_info().rss,
@@ -254,6 +262,7 @@ def _sample(process: psutil.Process, elapsed: float) -> dict[str, int | float]:
         "descendants": len(children),
         "server_descriptors": _descriptors(process),
         "descendant_descriptors": child_fds,
+        "unreadable_descendants": unreadable_children,
         "client_rss_bytes": psutil.Process().memory_info().rss,
     }
 
@@ -377,6 +386,7 @@ def main() -> None:
                 else 0
             ),
             "peak_client_rss_bytes": max(sample["client_rss_bytes"] for sample in samples),
+            "incomplete_descendant_samples": sum(sample["unreadable_descendants"] > 0 for sample in samples),
         }
         steady = [sample for sample in samples if sample["seconds"] >= min(20, args.seconds / 3)]
         if steady:

@@ -17,10 +17,12 @@
 
 import multiprocessing
 import threading
+from unittest.mock import Mock
 
+import psutil
 import pytest
 
-from soak.runner import Histogram, _host
+from soak.runner import Histogram, _host, _sample
 from soak.worker import LoadWorker
 
 
@@ -52,6 +54,37 @@ def test_workload_rejects_oversized_batches() -> None:
     """Prevent the load generator itself from allocating an over-budget batch."""
     with pytest.raises(ValueError, match="byte limit"):
         LoadWorker(batch_rows=4096, payload_bytes=1024)
+
+
+@pytest.mark.parametrize("failure", [psutil.NoSuchProcess(123), psutil.AccessDenied(123)])
+def test_sampling_survives_worker_exit_without_partial_totals(failure: psutil.Error) -> None:
+    """Retain usable child totals and flag denied measurements during worker churn."""
+    host = Mock(spec=psutil.Process)
+    gone = Mock(spec=psutil.Process)
+    live = Mock(spec=psutil.Process)
+    host.children.return_value = [gone, live]
+    host.memory_info.return_value.rss = 1000
+    host.num_fds.return_value = 12
+    gone.memory_info.return_value.rss = 9999
+    gone.num_fds.side_effect = failure
+    live.memory_info.return_value.rss = 100
+    live.num_fds.return_value = 3
+
+    sample = _sample(host, 1.5)
+
+    assert sample["server_rss_bytes"] == 1000
+    assert sample["descendant_rss_bytes"] == 100
+    assert sample["descendant_descriptors"] == 3
+    assert sample["unreadable_descendants"] == int(isinstance(failure, psutil.AccessDenied))
+
+
+def test_sampling_does_not_hide_host_permission_failure() -> None:
+    """A missing host measurement is not treated as normal child retirement."""
+    host = Mock(spec=psutil.Process)
+    host.children.return_value = []
+    host.memory_info.side_effect = psutil.AccessDenied(123)
+    with pytest.raises(psutil.AccessDenied):
+        _sample(host, 0)
 
 
 def test_host_waits_for_diagnostics_before_shutdown_acknowledgement() -> None:

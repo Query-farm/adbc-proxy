@@ -60,6 +60,34 @@ ERROR_SENTINEL = "private-downstream-deployment-probe"
 
 # Independent response dataclasses intentionally avoid the implementation protocol.
 @dataclass
+class WireOptionValue(ArrowSerializableDataclass):
+    """Represent one typed option without a JSON conversion."""
+
+    kind: str
+    string_value: str | None
+    bytes_value: bytes | None
+    int_value: int | None
+    double_value: float | None
+
+
+@dataclass
+class NamedOption(ArrowSerializableDataclass):
+    """Pair an option key with its discriminated value."""
+
+    key: str
+    value: WireOptionValue
+
+
+@dataclass
+class OpenConnectionRequest(ArrowSerializableDataclass):
+    """Declare typed session initialization independently of the SDK."""
+
+    target: str
+    database_options: list[NamedOption]
+    connection_options: list[NamedOption]
+
+
+@dataclass
 class OpenResult(ArrowSerializableDataclass):
     """Carry an authenticated session identifier."""
 
@@ -94,9 +122,9 @@ class Grainlift(Protocol):
     """Declare the independently checked subset of the public wire contract."""
 
     protocol_name: ClassVar[str] = "org.queryfarm.Grainlift.v1"
-    protocol_version: ClassVar[str] = "0.3.0"
+    protocol_version: ClassVar[str] = "0.4.0"
 
-    def open_connection(self, target: str, database_options_json: str, connection_options_json: str) -> OpenResult:
+    def open_connection(self, request: OpenConnectionRequest) -> OpenResult:
         """Allocate an authenticated session."""
         ...
 
@@ -287,7 +315,7 @@ def _port() -> int:
 
 
 def _handles(rpc: Grainlift) -> tuple[str, str]:
-    opened = rpc.open_connection(target="default", database_options_json="[]", connection_options_json="[]")
+    opened = rpc.open_connection(request=OpenConnectionRequest("default", [], []))
     session = opened.session_id
     statement = rpc.new_statement(session_id=session).statement_id
     return session, statement

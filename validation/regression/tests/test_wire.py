@@ -37,6 +37,73 @@ OPTION_TYPE = pa.struct(
         pa.field("double_value", pa.float64()),
     ]
 )
+NAMED_OPTION_TYPE = pa.struct([pa.field("key", pa.string(), False), pa.field("value", OPTION_TYPE, False)])
+REQUEST_SCHEMAS = {
+    "open_connection": pa.schema(
+        [
+            pa.field("target", pa.string(), False),
+            pa.field("database_options", pa.list_(NAMED_OPTION_TYPE), False),
+            pa.field("connection_options", pa.list_(NAMED_OPTION_TYPE), False),
+        ]
+    ),
+    "set_connection_option": pa.schema(
+        [
+            pa.field("session_id", pa.string(), False),
+            pa.field("key", pa.string(), False),
+            pa.field("value", OPTION_TYPE, False),
+        ]
+    ),
+    "set_statement_option": pa.schema(
+        [
+            pa.field("session_id", pa.string(), False),
+            pa.field("statement_id", pa.string(), False),
+            pa.field("key", pa.string(), False),
+            pa.field("value", OPTION_TYPE, False),
+        ]
+    ),
+    "get_info": pa.schema([pa.field("session_id", pa.string(), False), pa.field("codes", pa.list_(pa.int64()))]),
+    "get_objects": pa.schema(
+        [
+            pa.field("session_id", pa.string(), False),
+            pa.field("depth", pa.int64(), False),
+            pa.field("catalog", pa.string()),
+            pa.field("db_schema", pa.string()),
+            pa.field("table_name", pa.string()),
+            pa.field("table_types", pa.list_(pa.string())),
+            pa.field("column_name", pa.string()),
+        ]
+    ),
+    "get_table_schema": pa.schema(
+        [
+            pa.field("session_id", pa.string(), False),
+            pa.field("catalog", pa.string()),
+            pa.field("db_schema", pa.string()),
+            pa.field("table_name", pa.string(), False),
+        ]
+    ),
+    "get_statistics": pa.schema(
+        [
+            pa.field("session_id", pa.string(), False),
+            pa.field("catalog", pa.string()),
+            pa.field("db_schema", pa.string()),
+            pa.field("table_name", pa.string()),
+            pa.field("approximate", pa.bool_(), False),
+        ]
+    ),
+}
+
+
+def typed_option(kind: str, value: str | bytes | int | float) -> dict[str, object]:
+    """Construct the independently specified tagged option with one populated value slot."""
+    result: dict[str, object] = {
+        "kind": kind,
+        "string_value": None,
+        "bytes_value": None,
+        "int_value": None,
+        "double_value": None,
+    }
+    result[f"{kind}_value"] = value
+    return result
 
 
 def decode_reply(response: falcon.testing.Result, expected: pa.Schema | None = None) -> pa.RecordBatch:
@@ -79,19 +146,29 @@ class Wire:
 
     client: falcon.testing.TestClient
 
-    def call(self, method: str, values: Mapping[str, str], *, token: str = "alice-token") -> falcon.testing.Result:
+    def call(self, method: str, values: Mapping[str, object], *, token: str = "alice-token") -> falcon.testing.Result:
         """Send a unary request encoded according to the Grainlift wire contract.
 
         Args:
             method: Grainlift method name.
-            values: Non-null string fields in wire order.
+            values: Typed request fields in the independently declared wire order.
             token: Authenticated test principal credential.
 
         Returns:
             HTTP response including the raw Arrow body.
         """
-        schema = pa.schema([pa.field(name, pa.string(), nullable=False) for name in values])
-        batch = pa.record_batch([[value] for value in values.values()], schema=schema)
+        if method in REQUEST_SCHEMAS:
+            inner_schema = REQUEST_SCHEMAS[method]
+            assert set(values) == set(inner_schema.names)
+            inner = pa.record_batch([[values[field.name]] for field in inner_schema], schema=inner_schema)
+            payload = pa.BufferOutputStream()
+            with pa.ipc.new_stream(payload, inner_schema) as writer:
+                writer.write_batch(inner)
+            schema = pa.schema([pa.field("request", pa.binary(), nullable=False)])
+            batch = pa.record_batch([[payload.getvalue().to_pybytes()]], schema=schema)
+        else:
+            schema = pa.schema([pa.field(name, pa.string(), nullable=False) for name in values])
+            batch = pa.record_batch([[value] for value in values.values()], schema=schema)
         sink = pa.BufferOutputStream()
         with pa.ipc.new_stream(sink, schema) as writer:
             writer.write_batch(
@@ -99,7 +176,7 @@ class Wire:
                 custom_metadata={
                     "vgi_rpc.method": method,
                     "vgi_rpc.protocol": PROTOCOL,
-                    "vgi_rpc.protocol_version": "0.3.0",
+                    "vgi_rpc.protocol_version": "0.4.0",
                     "vgi_rpc.request_version": "1",
                 },
             )
@@ -112,7 +189,7 @@ class Wire:
     def open(self) -> str:
         """Open a connection and verify the native client's expected response schema."""
         response = self.call(
-            "open_connection", {"target": "regression", "database_options_json": "[]", "connection_options_json": "[]"}
+            "open_connection", {"target": "regression", "database_options": [], "connection_options": []}
         )
         assert response.status_code == 200
         batch = decode_reply(response, pa.schema([pa.field("session_id", pa.string(), nullable=False)]))
@@ -167,9 +244,7 @@ def test_wire_error_payload_uses_stock_exception_prefix(wire: Wire) -> None:
 
 def test_wire_unknown_target_does_not_allocate(wire: Wire, worker: ProbeWorker) -> None:
     """Reject an unauthorized target before a worker connection is constructed."""
-    response = wire.call(
-        "open_connection", {"target": "missing", "database_options_json": "[]", "connection_options_json": "[]"}
-    )
+    response = wire.call("open_connection", {"target": "missing", "database_options": [], "connection_options": []})
     assert response.status_code == 200
     assert decode_error(response)["status"] == "not_found"
     assert not worker.connections

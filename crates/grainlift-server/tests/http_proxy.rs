@@ -147,8 +147,9 @@ impl BackendConnection for FakeConnection {
 
     fn read_partition(
         &self,
-        _partition: &[u8],
+        partition: &[u8],
     ) -> AdbcResult<Box<dyn RecordBatchReader + Send + 'static>> {
+        assert_eq!(partition, &[1, 2, 3]);
         value_reader(vec![9])
     }
 }
@@ -311,6 +312,7 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
             ],
         },
     );
+    targets.insert("other".into(), targets["fake"].clone());
     let manager = Arc::new(SessionManager::new(
         Arc::new(FakeBackend),
         targets,
@@ -318,10 +320,16 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
         true,
     ));
     let server = Arc::new(build_server(manager, "test-worker".to_string()));
-    let auth = bearer_authenticate_static(HashMap::from([(
-        "secret".to_string(),
-        AuthContext::for_principal("test", "alice"),
-    )]));
+    let auth = bearer_authenticate_static(HashMap::from([
+        (
+            "secret".to_string(),
+            AuthContext::for_principal("test", "alice"),
+        ),
+        (
+            "bob-token".to_string(),
+            AuthContext::for_principal("test", "bob"),
+        ),
+    ]));
     let state = HttpState::builder()
         .server(server)
         .authenticate(auth)
@@ -338,7 +346,7 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
     let values = tokio::task::spawn_blocking(move || -> AdbcResult<(Vec<i64>, Option<i64>)> {
         let mut driver = GrainliftDriver;
         let database = driver.new_database_with_opts([
-            (OptionDatabase::Uri, endpoint.into()),
+            (OptionDatabase::Uri, endpoint.clone().into()),
             (OptionDatabase::Other(OPTION_TARGET.into()), "fake".into()),
             (
                 OptionDatabase::Other(OPTION_BEARER_TOKEN.into()),
@@ -480,9 +488,38 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
         assert_eq!(statement.execute_update()?, Some(3));
         statement.set_substrait_plan([1, 2, 3])?;
         let partitioned = statement.execute_partitions()?;
-        assert_eq!(partitioned.partitions, vec![vec![1, 2, 3]]);
+        assert_eq!(partitioned.partitions.len(), 1);
+        assert!(partitioned.partitions[0].starts_with(b"GLP2"));
+        for (token, target) in [("bob-token", "fake"), ("secret", "other")] {
+            let denied = driver
+                .new_database_with_opts([
+                    (OptionDatabase::Uri, endpoint.clone().into()),
+                    (OptionDatabase::Other(OPTION_TARGET.into()), target.into()),
+                    (
+                        OptionDatabase::Other(OPTION_BEARER_TOKEN.into()),
+                        token.into(),
+                    ),
+                ])?
+                .new_connection()?;
+            let error = denied
+                .read_partition(&partitioned.partitions[0])
+                .err()
+                .expect("partition must remain bound to owner and target");
+            assert_eq!(error.status, Status::NotFound);
+        }
+        let mut tampered = partitioned.partitions[0].clone();
+        *tampered.last_mut().unwrap() ^= 1;
         assert_eq!(
             connection
+                .read_partition(&tampered)
+                .err()
+                .expect("tampered token")
+                .status,
+            Status::NotFound
+        );
+        let partition_connection = database.new_connection()?;
+        assert_eq!(
+            partition_connection
                 .read_partition(&partitioned.partitions[0])?
                 .count(),
             1
@@ -499,6 +536,10 @@ async fn ordinary_adbc_client_reads_multiple_remote_batches() {
         assert!(invalidated.next().unwrap().is_ok());
         assert!(invalidated.next().unwrap().is_err());
         assert_eq!(independent.count(), 2);
+        let mut invalidated_by_schema = statement.execute()?;
+        statement.execute_schema()?;
+        assert!(invalidated_by_schema.next().unwrap().is_ok());
+        assert!(invalidated_by_schema.next().unwrap().is_err());
         Ok((values, affected))
     })
     .await

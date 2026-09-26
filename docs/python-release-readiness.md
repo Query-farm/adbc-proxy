@@ -23,21 +23,39 @@ limitations under the License.
 This record separates locally completed engineering gates from publication,
 remote CI, and deployment decisions. The scope is an authenticated HTTP service
 with bounded pull-based Arrow results and optional process-isolated callbacks.
-The SDK exposes every Grainlift protocol 0.3.0 operation; each backend implements
+The SDK exposes every Grainlift protocol 0.4.0 operation; each backend implements
 the capabilities it supports. This does not imply transparent multi-replica use.
 
-The [typed-response migration](typed-protocol.md) changes the wire contract and
+The [typed protocol migration](typed-protocol.md) changes the wire contract and
 restores compatibility with published VGI-RPC 0.47.1. The candidate v4 results
 below describe protocol 0.2 and do not validate these new source changes. A new
 installed-package candidate and runtime matrix are required before release.
 
-Current protocol 0.3 source validation: 344 SDK tests, 138 native Python
+Historical protocol 0.3 source validation: 344 SDK tests, 138 native Python
 regression tests and 13 hello-world tests pass using registry VGI-RPC 0.47.1.
 Ruff, formatting, strict mypy and isolated pydoclint pass. The SDK's
 [installed-wheel matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36244653629)
 passes Linux/macOS on Python 3.13/3.14. Restoring the transport's stock semantics
 passes 4,970 VGI-RPC tests; the `vgi-python` consumer retains its baseline result
 of 2,704 passes, 104 skips and one pre-existing directory-parity test failure.
+The Rust workspace passes all 56 tests, formatting and strict Clippy. The release
+build and external SQLite C-ABI smoke tests pass over HTTP, TCP, mTLS and Iroh.
+
+The unpublished [candidate v5](../validation/release-results/candidate-v5/README.md)
+passed 495 tests on both interpreters, retaining evidence of an initial worker
+startup timeout and the unchanged successful retry. It predates the protocol 0.4
+named requests, typed signed partition claims and ADBC semantics corrections.
+The [ADBC review](adbc-protocol-review.md) maps the current surface and explicitly
+records backend and adapter limits; no external ADBC certification is claimed.
+
+Protocol 0.4 source validation passes 446 SDK tests on Python 3.13 and 3.14,
+150 native regression tests, 13 hello-world tests and 66 Rust workspace tests.
+Ruff, formatting, strict mypy, isolated pydoclint and strict Clippy pass. The
+[SDK installed-wheel matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36246383408)
+passes all four Linux/macOS and Python 3.13/3.14 jobs. Its initial predecessor
+failed on Python 3.13's eager evaluation of an Arrow generic annotation; deferred
+annotations correct that issue. Direct public C-ABI tests exercise metadata
+distinctions that the current Python driver-manager wrapper normalizes or drops.
 
 The original candidate v2 validated the query-only SDK. The new operation surface
 adds transactions, preparation, binding, ingestion, metadata/statistics, partitions,

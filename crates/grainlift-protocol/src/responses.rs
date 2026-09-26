@@ -15,6 +15,7 @@
 
 //! Typed unary results use stock VGI's binary, single-row Arrow IPC envelope.
 
+use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use std::sync::Arc;
 
@@ -67,6 +68,13 @@ pub struct ValueResponse {
     pub value: WireOptionValue,
 }
 #[derive(Debug, Clone, PartialEq, VgiArrow)]
+pub struct PartitionClaims {
+    pub version: i64,
+    pub expires_at_ms: i64,
+    pub owner: String,
+    pub descriptor: Bytes,
+}
+#[derive(Debug, Clone, PartialEq, VgiArrow)]
 pub struct WireOptionValue {
     pub kind: String,
     pub string_value: Option<String>,
@@ -110,6 +118,28 @@ impl From<&OptionValue> for WireOptionValue {
 }
 
 impl WireOptionValue {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        let populated = [
+            self.string_value.is_some(),
+            self.bytes_value.is_some(),
+            self.int_value.is_some(),
+            self.double_value.is_some(),
+        ];
+        let correct = match self.kind.as_str() {
+            "string" => populated[0],
+            "bytes" => populated[1],
+            "int" => populated[2],
+            "double" => populated[3],
+            _ => false,
+        };
+        if correct && populated.into_iter().filter(|value| *value).count() == 1 {
+            Ok(())
+        } else {
+            Err(invalid(
+                "option kind and populated value fields do not match",
+            ))
+        }
+    }
     pub fn into_adbc(self) -> Result<OptionValue, ProtocolError> {
         match (
             self.kind.as_str(),
@@ -121,9 +151,7 @@ impl WireOptionValue {
             ("string", Some(value), None, None, None) => Ok(OptionValue::String(value)),
             ("bytes", None, Some(value), None, None) => Ok(OptionValue::Bytes(value.0)),
             ("int", None, None, Some(value), None) => Ok(OptionValue::Int(value)),
-            ("double", None, None, None, Some(value)) if value.is_finite() => {
-                Ok(OptionValue::Double(value))
-            }
+            ("double", None, None, None, Some(value)) => Ok(OptionValue::Double(value)),
             _ => Err(invalid(
                 "option kind and populated value fields do not match",
             )),
@@ -135,12 +163,51 @@ fn invalid(message: &str) -> ProtocolError {
     ProtocolError::InvalidWire(message.into())
 }
 
+pub trait ResponseRecord: VgiArrow {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        Ok(())
+    }
+}
+impl ResponseRecord for OkResponse {}
+impl ResponseRecord for SessionResponse {}
+impl ResponseRecord for StatementResponse {}
+impl ResponseRecord for SchemaResponse {}
+impl ResponseRecord for ValueResponse {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        self.value.validate()
+    }
+}
+fn validate_rows(value: Option<i64>) -> Result<(), ProtocolError> {
+    if value.is_some_and(|rows| rows < -1) {
+        Err(invalid(
+            "affected row count must be -1, null, or nonnegative",
+        ))
+    } else {
+        Ok(())
+    }
+}
+impl ResponseRecord for ExecuteResponse {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        validate_rows(self.rows_affected)
+    }
+}
+impl ResponseRecord for UpdateResponse {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        validate_rows(self.rows_affected)
+    }
+}
+impl ResponseRecord for PartitionsResponse {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        validate_rows(Some(self.rows_affected))
+    }
+}
+
 pub fn unary_response_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![Field::new(
-        "result",
-        DataType::Binary,
-        false,
-    )]))
+    envelope_schema("result")
+}
+
+pub(crate) fn envelope_schema(name: &str) -> SchemaRef {
+    Arc::new(Schema::new(vec![Field::new(name, DataType::Binary, false)]))
 }
 
 /// Fixed exchange schema carries dynamic Arrow batches without empty-schema turns.
@@ -241,10 +308,39 @@ pub fn decode_batch_ipc(bytes: &[u8], limit: usize) -> Result<RecordBatch, Proto
     if reader.next().transpose()?.is_some() {
         return Err(invalid("IPC stream contains multiple batches"));
     }
-    if batch.get_array_memory_size() > limit {
+    if batch_buffer_bytes(&batch) > limit {
         return Err(invalid("decoded Arrow batch exceeds configured limit"));
     }
     Ok(batch)
+}
+
+/// Count shared underlying Arrow allocations once, including sliced buffers.
+fn batch_buffer_bytes(batch: &RecordBatch) -> usize {
+    fn visit(data: &arrow_data::ArrayData, sizes: &mut HashMap<usize, usize>) {
+        for buffer in data
+            .buffers()
+            .iter()
+            .chain(data.nulls().map(|nulls| nulls.buffer()))
+        {
+            let size = buffer
+                .capacity()
+                .max(buffer.ptr_offset().saturating_add(buffer.len()));
+            sizes
+                .entry(buffer.data_ptr().as_ptr() as usize)
+                .and_modify(|current| *current = (*current).max(size))
+                .or_insert(size);
+        }
+        for child in data.child_data() {
+            visit(child, sizes);
+        }
+    }
+    let mut sizes = HashMap::new();
+    for array in batch.columns() {
+        visit(&array.to_data(), &mut sizes);
+    }
+    sizes
+        .values()
+        .fold(0usize, |total, size| total.saturating_add(*size))
 }
 
 fn validate_array(array: &dyn Array, nullable: bool) -> Result<(), ProtocolError> {
@@ -264,26 +360,59 @@ fn validate_array(array: &dyn Array, nullable: bool) -> Result<(), ProtocolError
 }
 
 /// Encode a typed response exactly as ArrowSerializableDataclass on stock Python VGI.
-pub fn encode_response<T: VgiArrow>(value: T, limit: usize) -> Result<RecordBatch, ProtocolError> {
+pub fn encode_response<T: ResponseRecord>(
+    value: T,
+    limit: usize,
+) -> Result<RecordBatch, ProtocolError> {
+    value.validate()?;
+    encode_record(value, "result", limit)
+}
+
+pub(crate) fn encode_record<T: VgiArrow>(
+    value: T,
+    field: &str,
+    limit: usize,
+) -> Result<RecordBatch, ProtocolError> {
+    let bytes = encode_record_ipc(value, limit)?;
+    Ok(RecordBatch::try_new(
+        envelope_schema(field),
+        vec![Arc::new(BinaryArray::from_vec(vec![bytes.as_slice()]))],
+    )?)
+}
+
+pub fn encode_record_ipc<T: VgiArrow>(value: T, limit: usize) -> Result<Vec<u8>, ProtocolError> {
     let array = T::build_singleton(value).map_err(|error| invalid(&error.to_string()))?;
     let record = array
         .as_any()
         .downcast_ref::<StructArray>()
         .ok_or_else(|| invalid("response type must be a record"))?;
     validate_array(record, false)?;
-    let bytes = encode_batch_ipc(&RecordBatch::from(record.clone()), limit)?;
-    Ok(RecordBatch::try_new(
-        unary_response_schema(),
-        vec![Arc::new(BinaryArray::from_vec(vec![bytes.as_slice()]))],
-    )?)
+    encode_batch_ipc(&RecordBatch::from(record.clone()), limit)
 }
 
 /// Decode into the declared response struct, with exact schema and null checks.
-pub fn decode_response<T: VgiArrow>(outer: &RecordBatch, limit: usize) -> Result<T, ProtocolError> {
-    if outer.schema().fields() != unary_response_schema().fields() {
-        return Err(invalid("unexpected unary response schema"));
+pub fn decode_response<T: ResponseRecord>(
+    outer: &RecordBatch,
+    limit: usize,
+) -> Result<T, ProtocolError> {
+    let value: T = decode_record(outer, "result", limit)?;
+    value.validate()?;
+    Ok(value)
+}
+
+pub(crate) fn decode_record<T: VgiArrow>(
+    outer: &RecordBatch,
+    field: &str,
+    limit: usize,
+) -> Result<T, ProtocolError> {
+    if outer.schema().fields() != envelope_schema(field).fields() {
+        return Err(invalid("unexpected typed envelope schema"));
     }
-    let batch = decode_batch_ipc(binary_value(outer, "result")?, limit)?;
+    decode_record_ipc(binary_value(outer, field)?, limit)
+}
+
+pub fn decode_record_ipc<T: VgiArrow>(bytes: &[u8], limit: usize) -> Result<T, ProtocolError> {
+    let batch = decode_batch_ipc(bytes, limit)?;
     require_one_row(&batch)?;
     let record = StructArray::from(batch);
     if record.data_type() != &T::arrow_data_type() {

@@ -20,7 +20,7 @@ use arrow_array::{BinaryArray, RecordBatch, StructArray};
 use arrow_ipc::writer::StreamWriter;
 use grainlift_protocol::*;
 
-fn round_trip<T: VgiArrow + Clone + PartialEq + std::fmt::Debug>(value: T) {
+fn round_trip<T: ResponseRecord + Clone + PartialEq + std::fmt::Debug>(value: T) {
     let outer = encode_response(value.clone(), MAX_CONTROL_BYTES).unwrap();
     assert_eq!(outer.schema(), unary_response_schema());
     assert_eq!(outer.num_rows(), 1);
@@ -38,7 +38,7 @@ fn all_eight_typed_responses_round_trip() {
         session_id: "session".into(),
         statement_id: "statement".into(),
     });
-    for rows_affected in [None, Some(i64::MIN), Some(i64::MAX)] {
+    for rows_affected in [None, Some(-1), Some(0), Some(i64::MAX)] {
         round_trip(ExecuteResponse {
             result_id: "result".into(),
             rows_affected,
@@ -75,19 +75,71 @@ fn all_eight_typed_responses_round_trip() {
 }
 
 #[test]
-fn typed_option_discriminator_requires_exactly_one_finite_value() {
+fn typed_option_discriminator_requires_exactly_one_value() {
     let mut value = WireOptionValue::from(&OptionValue::Int(1));
     value.string_value = Some("extra".into());
     assert!(value.into_adbc().is_err());
     let mut value = WireOptionValue::from(&OptionValue::Int(1));
     value.kind = "string".into();
     assert!(value.into_adbc().is_err());
-    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+}
+
+#[test]
+fn typed_float_options_preserve_ieee754_bits() {
+    for value in [
+        f64::from_bits(0x7ff8000000000042),
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -0.0,
+    ] {
+        let outer = encode_response(
+            ValueResponse {
+                value: WireOptionValue::from(&OptionValue::Double(value)),
+            },
+            MAX_CONTROL_BYTES,
+        )
+        .unwrap();
+        let response: ValueResponse = decode_response(&outer, MAX_CONTROL_BYTES).unwrap();
+        let OptionValue::Double(decoded) = response.value.into_adbc().unwrap() else {
+            panic!("double option");
+        };
+        assert_eq!(decoded.to_bits(), value.to_bits());
+    }
+}
+
+#[test]
+fn invalid_affected_counts_are_rejected_without_normalization() {
+    for count in [i64::MIN, -2] {
         assert!(
-            WireOptionValue::from(&OptionValue::Double(value))
-                .into_adbc()
-                .is_err()
+            encode_response(
+                UpdateResponse {
+                    rows_affected: Some(count)
+                },
+                MAX_CONTROL_BYTES
+            )
+            .is_err()
         );
+        assert!(
+            encode_response(
+                PartitionsResponse {
+                    rows_affected: count,
+                    schema_ipc: Bytes(vec![]),
+                    partitions: vec![]
+                },
+                MAX_CONTROL_BYTES
+            )
+            .is_err()
+        );
+        let bytes = encode_record_ipc(
+            ExecuteResponse {
+                result_id: "result".into(),
+                rows_affected: Some(count),
+                schema_ipc: Bytes(vec![]),
+            },
+            MAX_CONTROL_BYTES,
+        )
+        .unwrap();
+        assert!(decode_response::<ExecuteResponse>(&envelope(&bytes), MAX_CONTROL_BYTES).is_err());
     }
 }
 

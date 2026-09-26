@@ -16,5 +16,6 @@
 pub mod backend;
 mod bind_upload;
 pub mod config;
+mod partitions;
 pub mod service;
 pub mod session;

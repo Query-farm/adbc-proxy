@@ -1,0 +1,98 @@
+{
+  "built_at_unix": 1790428913.315691,
+  "files": {
+    "build-requirements.in": "28e067b5263b9006ca205fad490afb62a89929d2af723d82877a70dbfc1dbabb",
+    "build-requirements.txt": "8d34170344f31ee51205929640e459a9952d01b12ba2aa8dfeb81e6db7f1b5cd",
+    "hello/tests/test_hello.py": "eb6f77f25dafee0c447c83d5aa686f4c9d8d11365f73f3c67712a5dade0e59b6",
+    "hello/tests/test_native.py": "37926b621b88c8a68732b5272a0c9566e48f3e4e8bf12fe2d4e4c7b365a27532",
+    "regression/deployment/README.md": "f1770b9fc8b8fb8572ddcf593e9be2ee888103b8425ad57fd4e5548e92194b15",
+    "regression/deployment/__init__.py": "dd40ce5c7b3e5641d6e6118cac321f6e650d1e5b1a1e78d0152f13a340334d38",
+    "regression/deployment/__main__.py": "07f5534cbcbd4ab8648687e1b84e3de0e97078d4175e6de1b7ab5310f6c99ee0",
+    "regression/deployment/tls_edge.py": "079b22f2c14fb9478a95ac33cef680255dde84d3bf64146e9f394cb546c80784",
+    "regression/pyproject.toml": "9e16fd89323503db0930d484a25b41fe262f424c9d184a6b2931637d4e2cdff3",
+    "regression/soak/README.md": "c506086cc0fef2c25889fad0e2ae4a459dc219b1f124881cd790fc7a62312ba5",
+    "regression/soak/__init__.py": "53aea9537b96de9c398644d72ab131d7fda587e348a9cad65cc3ce3702bfa324",
+    "regression/soak/__main__.py": "df34ed2ebadf69ab8e5f82b49f3ede8bc763e16d3733844a5856f026f4f06976",
+    "regression/soak/runner.py": "5c733a862bcf7e3c89d8f81369cdec0b289b98a4d353d80db720c2cdb8cb8a88",
+    "regression/soak/worker.py": "6daf7662f485368bc4ef37d02bb61e8fd9037401fc74035febbd9132d1d5af89",
+    "regression/tests/__init__.py": "8f779d53fb9267914ede60530da520c97a0ae277f3a4d3f7368d0e07b39fccf5",
+    "regression/tests/conftest.py": "5fa2e13fdbf51a23bc88ce3e5305bafe015a8d54593987fd559e4ce256f0c1a6",
+    "regression/tests/feature_schemas.py": "53bc5bda9ec2bcbec73fa40f01d64b8be37022d86cf99f9e3ce3eb82633a2ee3",
+    "regression/tests/feature_worker.py": "d60335d4590fcea7c03c3e683b3c41e5ba0bcc67b62e1289a1b029864ffda685",
+    "regression/tests/process_worker.py": "c60894a185bf329a7a8f86c4a1a9c05deb1f8bdfdca22726d4623cc067490823",
+    "regression/tests/test_errors.py": "d7c775a3a1eeaa0a44a77535caa37f9946ecd00cfbef697fd51f4537d5f1b5a6",
+    "regression/tests/test_features.py": "3b3b4a2a89b61c71f0d48a5fbe250e076a997415b38ae3ef9db1f8d5d75481a9",
+    "regression/tests/test_lifecycle.py": "4d386652cb958f5bfe57e1c7f3c9e75bc1cfc98c7d25af88631b53ad15ab1007",
+    "regression/tests/test_native_isolation.py": "b7e362a173f01b772f734d7ac815853692883c74c8a924d2e5dbe440be34ab73",
+    "regression/tests/test_results.py": "ab4902047a53b9227f906565d3aaba37cf1cfb1a9d299f917932663f28da0382",
+    "regression/tests/test_rotation.py": "5ea6891d61bdfcbb50041f286ab265f62739db5c50692edf92100cf4f2b73691",
+    "regression/tests/test_soak.py": "980a996a26510b771cc5394011ff9c954264b0c414490b1df3b93751c283c416",
+    "regression/tests/test_wire.py": "471bbaeec5d0ab4051c05f5b23014fdcd625797e19d74c67f77d5d36ab004521",
+    "regression/tests/test_worker.py": "7cf1f318a83278ecfc013c01cbee9234e523d22c128d5775e75ad74f8ff6ade2",
+    "regression/tests/worker.py": "a19f4c45137ed8079feb8101dffac1ab3f86fce9e89c841d9dda7fa013cb5ea8",
+    "requirements.in": "a97c0692431f0303d6a5ee308e9b22f5a362e2f23468305cdba5fb13bdce6c9a",
+    "requirements.txt": "0525fe3132d726e6874067830ca9c25847d9fcdd9fe63aff76c862fe3d049726",
+    "toolkit/pyproject.toml": "6045b5bac23bf85648cc1fa5ab31262e440d7809a86b9eed4e5cf4434d791089",
+    "toolkit/tests/test_binding.py": "c8a62ec0a07c891819a15ba31ddebeeff46c862a63266926f271ae4a5b090d99",
+    "toolkit/tests/test_binding_decode.py": "4476e84bb6a3eda33a92d8473105d94b5b57399a4941058fdc14567b8e80fcf1",
+    "toolkit/tests/test_binding_service.py": "1e27c86073f4786de463cc21c3aca5f5a1d75c3631bdd7d3961b08cbb7dcf3bb",
+    "toolkit/tests/test_credentials.py": "16bd4c46fb2cd713240d662fc9d7a4417a528a2664956db6822e08d96310a35e",
+    "toolkit/tests/test_hardening.py": "28498ecd9a69d819b05675442bb5c20c0d69a654a3be4c761cce105dd797728c",
+    "toolkit/tests/test_http.py": "bd45cb198b804f0a02bf31c8c447c30e67160eb14a0bfe8c3e62ed41f672518f",
+    "toolkit/tests/test_isolation.py": "bb2c1868a98dcbe65e19c393cb8d146fd3c3d714618a167343efdbdc0bb5ffd3",
+    "toolkit/tests/test_isolation_features.py": "96581d7a7bbe65c1fe745243656172b57b6f9f049eb4fd1b9687baa01457a45e",
+    "toolkit/tests/test_service.py": "59b19d086d79c4e95961441162a22b553001404fd8422a049c336ea0a5ea6a1c",
+    "toolkit/tests/test_statement_close_race.py": "f633043c99b35201bbb1bee5c2e8e446e7e4e7742e5983a9c66375a1f6f75d7e",
+    "toolkit/tests/test_typed_responses.py": "94e6e24a0039748634e07e8821dabae47ab91e8f74d087d377c46f93350f8ad8",
+    "toolkit/tests/test_unary_features.py": "220b2ab718bf95f7ee5059b7178f5a0ccbcb93da8a825eb1a0bac1ea747fee31",
+    "wheels/grainlift_hello_world_python-0.1.0-py3-none-any.whl": "3e6445e634db1bcfff3c148f4fa12d710b51c0101c1e98b051770a7029c1bc11",
+    "wheels/grainlift_hello_world_python-0.1.0.tar.gz": "07048b8ec5b735732516f13b28bfec1d04e1d8f6c694bb7c18b9893872de26f5",
+    "wheels/grainlift_python-0.1.0-py3-none-any.whl": "296c17bb88e33233ddbea510f66a39d108ee77a29e86594d9d64e542bed37b39",
+    "wheels/grainlift_python-0.1.0.tar.gz": "182b051bdf27ec6dc2cc838e648304ea5475c4c46a2fa6e2c56f76fd6403358b"
+  },
+  "schema_version": 1,
+  "sdist_wheels_identical": true,
+  "source_archives_clean": true,
+  "sources": {
+    "grainlift-hello-world-python": {
+      "dirty": false,
+      "files": {
+        "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "README.md": "8ea18dd3a5a903c448be2e76eac2fb4da0b22163cdaca88c4aa7bd267aa45ab5",
+        "pyproject.toml": "3ec84df027b6cac5b33c518c47b19bc82022d98e0d3e08b2316a8eb09dc69b88",
+        "src/grainlift_hello_world/__init__.py": "e58ce02c7858acaab74642a42c3f67d9cce110488ca622b7a84c44ac097402cf",
+        "src/grainlift_hello_world/client.py": "917cd6323a99b0b892c37cdf4b2ba12fc8a73484aae0819525c871c6812f24ab"
+      },
+      "head": "1c675cc3dd6b3f6e77c99ac9e1bdaa14de478dcd"
+    },
+    "grainlift-python": {
+      "dirty": false,
+      "files": {
+        "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "README.md": "502925767e1c4ea09682e931644f571712b9b9b2a59fa95b97a91808916c855b",
+        "pyproject.toml": "6045b5bac23bf85648cc1fa5ab31262e440d7809a86b9eed4e5cf4434d791089",
+        "src/grainlift/__init__.py": "241806b5d150a6f0668dd343bd2801071fa298a60de1a3b5d8fddd6713916dae",
+        "src/grainlift/api.py": "552f68549a1223b49e1bde20a063eaf9c4807c6cc0fa34a269bbd59d3f5abf96",
+        "src/grainlift/binding.py": "4039670d9395a6e931a3ff62a386b3f7fcc870ca171dcbc06ef37c1c1fd95e0a",
+        "src/grainlift/credentials.py": "560f19e9a41d57d7fd28f7f1234db15f73e7f2df58ce21eb36bcc6fb1a53464e",
+        "src/grainlift/isolation.py": "1971fcf24c5e2be9fce591dfd4004cfd384b4f2c1922a9391d14c1a5d4f807c2",
+        "src/grainlift/options.py": "7d80b839b6e04762399964ca86b71d5205c04a36a9d34b634cff2906713e410d",
+        "src/grainlift/protocol.py": "3371fc773ca2121a767c4dff8513d3981b9a1e833438f4a6c8c7b44228b5429f",
+        "src/grainlift/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "src/grainlift/server.py": "253b71214977a663ad53267213c75152bc8949f4406e015fa98cc6bb5b6ad091",
+        "src/grainlift/telemetry.py": "b1b5e47a6f7765aa0c09ec95648883788430ad374b96facd75177d55582dcc59"
+      },
+      "head": "7a4a273866382cd0589d654e2015030372844a2f"
+    }
+  },
+  "suites": [
+    "toolkit",
+    "hello",
+    "regression"
+  ],
+  "transport": {
+    "requirement": "vgi-rpc[http]==0.47.1",
+    "source": "package-index"
+  },
+  "uv_version": "uv 0.11.7 (9d177269e 2026-04-15 aarch64-apple-darwin)"
+}

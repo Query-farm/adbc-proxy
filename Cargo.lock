@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adbc-driver-grainlift"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "adbc_core",
  "adbc_ffi",
@@ -1478,10 +1478,11 @@ dependencies = [
 
 [[package]]
 name = "grainlift-protocol"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
+ "arrow-data",
  "arrow-ipc",
  "arrow-schema",
  "base64 0.22.1",
@@ -1493,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "grainlift-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "adbc-driver-grainlift",
  "adbc_core",
@@ -1504,14 +1505,17 @@ dependencies = [
  "axum",
  "clap",
  "grainlift-protocol",
+ "hmac",
  "iroh",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "rand 0.8.8",
  "rcgen",
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-util",

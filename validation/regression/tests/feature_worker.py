@@ -176,11 +176,12 @@ class SQLiteFeatureConnection(Connection):
         column_name: str | None,
     ) -> QueryResult:
         """Describe real tables using the complete standard hierarchical schema."""
-        if catalog not in (None, "main") or db_schema not in (None, ""):
+        if not self._matches("main", catalog) or not self._matches("", db_schema):
             return QueryResult(OBJECTS_SCHEMA, iter([]))
         tables = []
         names = self.database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?", (table_name or "%",)
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
+            ("%" if table_name is None else table_name,),
         )
         for (name,) in names:
             if table_types is not None and "TABLE" not in table_types:
@@ -188,7 +189,7 @@ class SQLiteFeatureConnection(Connection):
             columns = [
                 {"column_name": field.name, "ordinal_position": index + 1, "xdbc_type_name": str(field.type)}
                 for index, field in enumerate(self.get_table_schema(None, None, name))
-                if column_name is None or field.name == column_name
+                if self._matches(field.name, column_name)
             ]
             tables.append(
                 {
@@ -204,6 +205,9 @@ class SQLiteFeatureConnection(Connection):
         )
         return QueryResult(table.schema, iter(table.to_batches()))
 
+    def _matches(self, value: str, pattern: str | None) -> bool:
+        return pattern is None or bool(self.database.execute("SELECT ? LIKE ?", (value, pattern)).fetchone()[0])
+
     def get_statistic_names(self) -> QueryResult:
         """Advertise the fixture's deterministic custom statistic name."""
         return _result(pa.record_batch([["fixture.row_count"], [1024]], schema=STATISTIC_NAMES_SCHEMA))
@@ -216,14 +220,20 @@ class SQLiteFeatureConnection(Connection):
         approximate: bool,
     ) -> QueryResult:
         """Compute an actual SQLite row count in the standard nested union schema."""
-        name = table_name or "items"
-        self.get_table_schema(catalog, db_schema, name)
-        count = self.database.execute(f"SELECT COUNT(*) FROM {_identifier(name)}").fetchone()[0]
+        if not self._matches("main", catalog) or not self._matches("", db_schema):
+            return QueryResult(STATISTICS_SCHEMA, iter([]))
+        names = [
+            name
+            for (name,) in self.database.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            if self._matches(name, table_name)
+        ]
+        counts = [self.database.execute(f"SELECT COUNT(*) FROM {_identifier(name)}").fetchone()[0] for name in names]
+        size = len(names)
         union = pa.UnionArray.from_dense(
-            pa.array([0], type=pa.int8()),
-            pa.array([0], type=pa.int32()),
+            pa.array([0] * size, type=pa.int8()),
+            pa.array(range(size), type=pa.int32()),
             [
-                pa.array([count], type=pa.int64()),
+                pa.array(counts, type=pa.int64()),
                 pa.array([], type=pa.uint64()),
                 pa.array([], type=pa.float64()),
                 pa.array([], type=pa.binary()),
@@ -233,16 +243,16 @@ class SQLiteFeatureConnection(Connection):
         )
         stats = pa.StructArray.from_arrays(
             [
-                pa.array([name]),
-                pa.array([None], type=pa.string()),
-                pa.array([6], type=pa.int16()),
+                pa.array(names, type=pa.string()),
+                pa.array([None] * size, type=pa.string()),
+                pa.array([6] * size, type=pa.int16()),
                 union,
-                pa.array([False]),
+                pa.array([False] * size, type=pa.bool_()),
             ],
             fields=list(STATISTIC),
         )
         databases = pa.StructArray.from_arrays(
-            [pa.array([""]), pa.ListArray.from_arrays(pa.array([0, 1], type=pa.int32()), stats)],
+            [pa.array([""]), pa.ListArray.from_arrays(pa.array([0, size], type=pa.int32()), stats)],
             fields=list(STATISTIC_DB),
         )
         return _result(

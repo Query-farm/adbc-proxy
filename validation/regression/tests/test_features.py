@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-import json
+import math
 import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -36,11 +36,12 @@ from grainlift import IsolatedWorker, Service, Worker
 from vgi_rpc import AnnotatedBatch, ExchangeState, Stream
 from vgi_rpc.http import http_connect
 
+from .adbc_abi import metadata_connection
 from .conftest import Harness, QuietHandler, ThreadedServer
 from .feature_schemas import INFO_SCHEMA, OBJECTS_SCHEMA, STATISTIC_NAMES_SCHEMA, STATISTICS_SCHEMA, TABLE_TYPES_SCHEMA
 from .feature_worker import SQLiteFeatureWorker, Value
-from .test_rotation import Grainlift
-from .test_wire import OPTION_TYPE, Wire, decode_error, decode_reply
+from .test_rotation import Grainlift, OpenConnectionRequest
+from .test_wire import OPTION_TYPE, Wire, decode_error, decode_reply, typed_option
 
 
 @dataclass
@@ -98,7 +99,7 @@ class BindingOracle(Grainlift, Protocol):
     """Declare binding independently using the stock VGI exchange mechanism."""
 
     protocol_name: ClassVar[str] = "org.queryfarm.Grainlift.v1"
-    protocol_version: ClassVar[str] = "0.3.0"
+    protocol_version: ClassVar[str] = "0.4.0"
 
     def bind(self, session_id: str, statement_id: str, schema_ipc: bytes) -> Stream[ExchangeState]:
         """Stage one parameter batch using the fixed nonempty exchange envelope."""
@@ -328,7 +329,7 @@ def test_stock_vgi_binding_uses_independent_fixed_envelope(
         httpx2.Client(base_url=features.endpoint, headers={"Authorization": "Bearer alice-token"}, timeout=10) as http,
         http_connect(BindingOracle, client=http) as rpc,  # type: ignore[type-abstract]
     ):
-        session = rpc.open_connection(target="features", database_options_json="[]", connection_options_json="[]")
+        session = rpc.open_connection(request=OpenConnectionRequest("features", [], []))
         statement = rpc.new_statement(session_id=session.session_id)
         arguments = {"session_id": session.session_id, "statement_id": statement.statement_id}
         try:
@@ -419,12 +420,29 @@ def test_ingestion_decodes_dictionary_values_and_temporary_tables_are_connection
 @pytest.mark.native
 def test_typed_options_and_initialization_options(features: FeatureHarness) -> None:
     """All four ADBC option types survive database initialization and handle mutation."""
-    initial = {"fixture.database.int": 2**53 + 7}
-    with features.connect(
-        database_options=initial, connection_options={"fixture.connection.bytes": b"\x00\xff"}
-    ) as connection:
+    initial: dict[str, Value] = {
+        "fixture.database.int": 2**53 + 7,
+        "fixture.database.text": "snowman ☃",
+        "fixture.database.bytes": b"\x00\xff",
+        "fixture.database.double": -1.25,
+        "fixture.database.nan": float("nan"),
+    }
+    connection_options: dict[str, Value] = {
+        "fixture.connection.bytes": b"\x00\xff",
+        "fixture.connection.text": "",
+        "fixture.connection.int": -(2**63),
+        "fixture.connection.double": 3.5,
+    }
+    with features.connect(database_options=initial, connection_options=connection_options) as connection:
         assert connection.get_option_int("fixture.database.int") == 2**53 + 7
+        assert connection.get_option("fixture.database.text") == "snowman ☃"
+        assert connection.get_option_bytes("fixture.database.bytes") == b"\x00\xff"
+        assert connection.get_option_float("fixture.database.double") == -1.25
+        assert math.isnan(connection.get_option_float("fixture.database.nan"))
         assert connection.get_option_bytes("fixture.connection.bytes") == b"\x00\xff"
+        assert connection.get_option("fixture.connection.text") == ""
+        assert connection.get_option_int("fixture.connection.int") == -(2**63)
+        assert connection.get_option_float("fixture.connection.double") == 3.5
         with manager.AdbcStatement(connection) as statement:
             for handle in (connection, statement):
                 options: dict[str, Value] = {
@@ -438,6 +456,10 @@ def test_typed_options_and_initialization_options(features: FeatureHarness) -> N
                 assert handle.get_option_bytes("fixture.bytes") == b"\x00\xff"
                 assert handle.get_option_int("fixture.int") == -(2**53 + 7)
                 assert handle.get_option_float("fixture.float") == 1.25
+                for nonfinite in (float("nan"), float("inf"), float("-inf")):
+                    handle.set_options(**{"fixture.float": nonfinite})
+                    observed = handle.get_option_float("fixture.float")
+                    assert math.isnan(observed) if math.isnan(nonfinite) else observed == nonfinite
                 with pytest.raises(manager.Error) as incompatible:
                     handle.get_option("fixture.int")
                 assert incompatible.value.status_code == manager.AdbcStatusCode.INVALID_DATA
@@ -508,6 +530,58 @@ def test_object_discovery_respects_depth_and_empty_filters(features: FeatureHarn
 
 
 @pytest.mark.native
+def test_metadata_distinguishes_null_empty_and_pattern_filters(features: FeatureHarness) -> None:
+    """Null means unrestricted; empty strings and lists retain their distinct ADBC meanings."""
+    with features.connect() as connection:
+        all_objects = _read(connection.get_objects(manager.GetObjectsDepth.ALL)).to_pylist()
+        assert all_objects[0]["catalog_name"] == "main"
+        assert _read(connection.get_objects(manager.GetObjectsDepth.ALL, catalog="")).num_rows == 0
+        assert _read(connection.get_objects(manager.GetObjectsDepth.ALL, db_schema="")).num_rows == 1
+        empty_by_name = _read(connection.get_objects(manager.GetObjectsDepth.ALL, table_name="")).to_pylist()
+        # The Python wrapper currently drops table_types entirely. Exercise
+        # the public C ABI directly so this checks the actual driver's contract.
+        with metadata_connection(features.driver, features.endpoint, features.target) as native:
+            empty_by_types = _read(native.get_objects([])).to_pylist()
+            absent_type = _read(native.get_objects(["VIEW"])).to_pylist()
+            assert absent_type[0]["catalog_db_schemas"][0]["db_schema_tables"] == []
+            matching = _read(native.get_objects(["TABLE"])).to_pylist()
+            assert matching[0]["catalog_db_schemas"][0]["db_schema_tables"][0]["table_name"] == "items"
+        for rows in (empty_by_name, empty_by_types):
+            assert rows[0]["catalog_db_schemas"][0]["db_schema_tables"] == []
+        rows = _read(connection.get_objects(manager.GetObjectsDepth.ALL, column_name="")).to_pylist()
+        assert rows[0]["catalog_db_schemas"][0]["db_schema_tables"][0]["table_columns"] == []
+        patterns = _read(
+            connection.get_objects(
+                manager.GetObjectsDepth.ALL, catalog="ma%", db_schema="%", table_name="ite_s", column_name="la_el"
+            )
+        ).to_pylist()
+        columns = patterns[0]["catalog_db_schemas"][0]["db_schema_tables"][0]["table_columns"]
+        assert [column["column_name"] for column in columns] == ["label"]
+        statistics = _read(connection.get_statistics(None, None, "", False)).to_pylist()
+        assert statistics[0]["catalog_db_schemas"][0]["db_schema_statistics"] == []
+        statistics = _read(connection.get_statistics(None, None, None, False)).to_pylist()
+        assert statistics[0]["catalog_db_schemas"][0]["db_schema_statistics"][0]["table_name"] == "items"
+
+
+@pytest.mark.native
+@pytest.mark.parametrize("codes", [None, [], [2**32 - 1], [0, 2**32 - 1]])
+def test_get_info_preserves_empty_selection_and_unknown_uint32_codes(
+    features: FeatureHarness, codes: list[int] | None
+) -> None:
+    """Unknown valid uint32 metadata codes are omitted instead of rejected or truncated."""
+    # Python's get_info([]) passes a null pointer, conflating empty with all.
+    with metadata_connection(features.driver, features.endpoint, features.target) as connection:
+        result = _read(connection.get_info(codes))
+        assert result.schema.equals(INFO_SCHEMA)
+        returned = result.column("info_name").to_pylist()
+        assert 2**32 - 1 not in returned
+        if codes is None:
+            assert {0, 1, 100}.issubset(returned)
+        else:
+            assert returned == ([0] if 0 in codes else [])
+
+
+@pytest.mark.native
 def test_partition_roundtrip_and_principal_ownership(features: FeatureHarness) -> None:
     """Opaque fixture partitions roundtrip while another authenticated principal is denied."""
     with features.connect() as connection, manager.AdbcStatement(connection) as statement:
@@ -575,7 +649,7 @@ def test_legacy_query_worker_does_not_claim_unimplemented_capabilities(harness: 
                 "catalog": None,
                 "db_schema": None,
                 "table_name": None,
-                "table_type": None,
+                "table_types": None,
                 "column_name": None,
             },
         ),
@@ -591,12 +665,12 @@ def test_metadata_wire_reply_schema_is_independent_of_sdk(
     with Service(SQLiteFeatureWorker(str(tmp_path / "wire.sqlite"))) as service:
         wire = Wire(falcon.testing.TestClient(service.app(tokens={"alice-token": "alice"})))
         response = wire.call(
-            "open_connection", {"target": "features", "database_options_json": "[]", "connection_options_json": "[]"}
+            "open_connection", {"target": "features", "database_options": [], "connection_options": []}
         )
         sid = decode_reply(response).column(0)[0].as_py()
-        values = {"session_id": sid}
+        values: dict[str, object] = {"session_id": sid}
         if args is not None:
-            values["args_json"] = json.dumps(args)
+            values.update(args)
         response = wire.call(method, values)
         assert response.status_code == 200
         expected = pa.schema(
@@ -615,9 +689,7 @@ def test_expanded_unary_wire_schemas_and_typed_values(tmp_path: Path) -> None:
     """Independently encode requests and assert every new unary response shape."""
     with Service(SQLiteFeatureWorker(str(tmp_path / "wire.sqlite"))) as service:
         wire = Wire(falcon.testing.TestClient(service.app(tokens={"alice-token": "alice"})))
-        opened = wire.call(
-            "open_connection", {"target": "features", "database_options_json": "[]", "connection_options_json": "[]"}
-        )
+        opened = wire.call("open_connection", {"target": "features", "database_options": [], "connection_options": []})
         sid = str(decode_reply(opened).column(0)[0].as_py())
         created = wire.call("new_statement", {"session_id": sid})
         created_batch = decode_reply(
@@ -630,7 +702,7 @@ def test_expanded_unary_wire_schemas_and_typed_values(tmp_path: Path) -> None:
         for method, parameters in (
             ("set_sql_query", {**statement, "sql": "INSERT INTO items VALUES (1, 'one')"}),
             ("prepare", statement),
-            ("set_statement_option", {**statement, "key": "fixture.int", "value_json": '{"type":"int","value":17}'}),
+            ("set_statement_option", {**statement, "key": "fixture.int", "value": typed_option("int", 17)}),
         ):
             response = wire.call(method, parameters)
             assert decode_reply(response, ok).column("ok")[0].as_py() is True
@@ -678,9 +750,7 @@ def test_server_authoritative_options_reject_open_and_mutation_overrides(tmp_pat
         connection_options={"fixture.connection.bytes": b"\x00\xff"},
     ) as service:
         wire = Wire(falcon.testing.TestClient(service.app(tokens={"alice-token": "alice"})))
-        opened = wire.call(
-            "open_connection", {"target": "features", "database_options_json": "[]", "connection_options_json": "[]"}
-        )
+        opened = wire.call("open_connection", {"target": "features", "database_options": [], "connection_options": []})
         sid = str(decode_reply(opened).column(0)[0].as_py())
         for key, kind, expected in (
             ("fixture.database.int", "int", 17),
@@ -694,22 +764,22 @@ def test_server_authoritative_options_reject_open_and_mutation_overrides(tmp_pat
             assert option[f"{kind}_value"] == expected
         created = wire.call("new_statement", {"session_id": sid})
         statement_id = str(decode_reply(created).column("statement_id")[0].as_py())
-        attempts = [
+        attempts: list[tuple[str, dict[str, object]]] = [
             (
                 "open_connection",
                 {
                     "target": "features",
-                    "database_options_json": '[{"key":"fixture.database.int","type":"int","value":18}]',
-                    "connection_options_json": "[]",
+                    "database_options": [{"key": "fixture.database.int", "value": typed_option("int", 18)}],
+                    "connection_options": [],
                 },
             ),
             (
                 "set_connection_option",
-                {"session_id": sid, "key": "fixture.connection.bytes", "value_json": '{"type":"bytes","value":"AP8="}'},
+                {"session_id": sid, "key": "fixture.connection.bytes", "value": typed_option("bytes", b"\x00\xff")},
             ),
             (
                 "set_connection_option",
-                {"session_id": sid, "key": "fixture.database.int", "value_json": '{"type":"int","value":17}'},
+                {"session_id": sid, "key": "fixture.database.int", "value": typed_option("int", 17)},
             ),
             (
                 "set_statement_option",
@@ -717,10 +787,23 @@ def test_server_authoritative_options_reject_open_and_mutation_overrides(tmp_pat
                     "session_id": sid,
                     "statement_id": statement_id,
                     "key": "fixture.database.int",
-                    "value_json": '{"type":"int","value":17}',
+                    "value": typed_option("int", 17),
                 },
             ),
         ]
         for method, values in attempts:
             response = wire.call(method, values)
             assert decode_error(response)["status"] == "unauthorized"
+
+
+@pytest.mark.parametrize("code", [-1, 2**32])
+def test_typed_get_info_rejects_codes_outside_uint32(tmp_path: Path, code: int) -> None:
+    """The int64 Arrow representation cannot smuggle values outside the ADBC uint32 domain."""
+    with Service(SQLiteFeatureWorker(str(tmp_path / "wire.sqlite"))) as service:
+        wire = Wire(falcon.testing.TestClient(service.app(tokens={"alice-token": "alice"})))
+        opened = wire.call("open_connection", {"target": "features", "database_options": [], "connection_options": []})
+        session = decode_reply(opened).column("session_id")[0].as_py()
+        invalid = wire.call("get_info", {"session_id": session, "codes": [code]})
+        assert decode_error(invalid)["status"] == "invalid_arguments"
+        valid = decode_reply(wire.call("get_info", {"session_id": session, "codes": [0, 2**32 - 1]}))
+        assert valid.column("result_id")[0].as_py()

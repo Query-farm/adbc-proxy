@@ -145,7 +145,7 @@ impl GrainliftDatabase {
         Ok(value)
     }
 
-    fn remote_options(&self) -> Vec<protocol::WireOption> {
+    fn remote_options(&self) -> Vec<protocol::NamedOption> {
         // Without `grainlift.uri`, the standard ADBC `uri` identifies the
         // Grainlift service. With it, forward `uri` to the downstream driver.
         let standard_uri_is_grainlift = !self.options.contains_key(OPTION_GRAINLIFT_URI);
@@ -155,9 +155,9 @@ impl GrainliftDatabase {
                 !is_grainlift_database_option(key)
                     && !(standard_uri_is_grainlift && key.as_str() == "uri")
             })
-            .map(|(key, value)| protocol::WireOption {
+            .map(|(key, value)| protocol::NamedOption {
                 key: key.clone(),
-                value: protocol::JsonOptionValue::from(value),
+                value: protocol::WireOptionValue::from(value),
             })
             .collect()
     }
@@ -224,9 +224,9 @@ impl Database for GrainliftDatabase {
         };
         let connection_options = opts
             .into_iter()
-            .map(|(key, value)| protocol::WireOption {
+            .map(|(key, value)| protocol::NamedOption {
                 key: key.as_ref().to_string(),
-                value: protocol::JsonOptionValue::from(&value),
+                value: protocol::WireOptionValue::from(&value),
             })
             .collect::<Vec<_>>();
         let state = RemoteConnection::open(RemoteConnectionOptions {
@@ -314,12 +314,18 @@ impl Connection for GrainliftConnection {
         &self,
         codes: Option<HashSet<InfoCode>>,
     ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
-        let wire_codes = codes
-            .as_ref()
-            .map(|values| values.iter().map(u32::from).collect::<Vec<_>>());
+        let wire_codes = codes.as_ref().map(|values| {
+            values
+                .iter()
+                .map(|code| i64::from(u32::from(code)))
+                .collect::<Vec<_>>()
+        });
         let downstream = self.remote.connection_stream_call(
             protocol::method::GET_INFO,
-            serde_json::json!({ "codes": wire_codes }),
+            protocol::GetInfoRequest {
+                session_id: self.remote.session_id.clone(),
+                codes: wire_codes,
+            },
         )?;
         let schema = downstream.schema();
         let grainlift_batch = grainlift_info_batch(codes.as_ref(), schema.clone())?;
@@ -342,14 +348,16 @@ impl Connection for GrainliftConnection {
     ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         self.remote.connection_stream_call(
             protocol::method::GET_OBJECTS,
-            serde_json::json!({
-                "depth": i32::from(depth),
-                "catalog": catalog,
-                "db_schema": db_schema,
-                "table_name": table_name,
-                "table_type": table_type,
-                "column_name": column_name,
-            }),
+            protocol::GetObjectsRequest {
+                session_id: self.remote.session_id.clone(),
+                depth: i64::from(i32::from(depth)),
+                catalog: catalog.map(str::to_string),
+                db_schema: db_schema.map(str::to_string),
+                table_name: table_name.map(str::to_string),
+                table_types: table_type
+                    .map(|values| values.into_iter().map(str::to_string).collect()),
+                column_name: column_name.map(str::to_string),
+            },
         )
     }
 
@@ -361,11 +369,12 @@ impl Connection for GrainliftConnection {
     ) -> Result<Schema> {
         self.remote.connection_schema_call(
             protocol::method::GET_TABLE_SCHEMA,
-            serde_json::json!({
-                "catalog": catalog,
-                "db_schema": db_schema,
-                "table_name": table_name,
-            }),
+            protocol::GetTableSchemaRequest {
+                session_id: self.remote.session_id.clone(),
+                catalog: catalog.map(str::to_string),
+                db_schema: db_schema.map(str::to_string),
+                table_name: table_name.into(),
+            },
         )
     }
 
@@ -388,12 +397,13 @@ impl Connection for GrainliftConnection {
     ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         self.remote.connection_stream_call(
             protocol::method::GET_STATISTICS,
-            serde_json::json!({
-                "catalog": catalog,
-                "db_schema": db_schema,
-                "table_name": table_name,
-                "approximate": approximate,
-            }),
+            protocol::GetStatisticsRequest {
+                session_id: self.remote.session_id.clone(),
+                catalog: catalog.map(str::to_string),
+                db_schema: db_schema.map(str::to_string),
+                table_name: table_name.map(str::to_string),
+                approximate,
+            },
         )
     }
 
@@ -790,8 +800,8 @@ struct RemoteConnectionOptions {
     endpoint: String,
     bearer_token: Option<String>,
     target: String,
-    database_options: Vec<protocol::WireOption>,
-    connection_options: Vec<protocol::WireOption>,
+    database_options: Vec<protocol::NamedOption>,
+    connection_options: Vec<protocol::NamedOption>,
     request_timeout_ms: usize,
     max_response_bytes: usize,
     max_bind_bytes: usize,
@@ -1010,20 +1020,11 @@ impl RemoteConnection {
             max_response_bytes,
             transport_options,
         )?;
-        let request = RecordBatch::try_new(
-            protocol::open_connection_schema(),
-            vec![
-                Arc::new(StringArray::from(vec![target])),
-                Arc::new(StringArray::from(vec![
-                    protocol::encode_options(&database_options)
-                        .map_err(|error| invalid(error.to_string()))?,
-                ])),
-                Arc::new(StringArray::from(vec![
-                    protocol::encode_options(&connection_options)
-                        .map_err(|error| invalid(error.to_string()))?,
-                ])),
-            ],
-        )?;
+        let request = typed_request(protocol::OpenConnectionRequest {
+            target,
+            database_options,
+            connection_options,
+        })?;
         let response = transport.call(protocol::method::OPEN_CONNECTION, &request)?;
         let session_id = decode_response::<protocol::SessionResponse>(&response)?.session_id;
         Ok(Self {
@@ -1177,12 +1178,12 @@ impl RemoteConnection {
         )?))
     }
 
-    fn connection_stream_call(
+    fn connection_stream_call<T: protocol::RequestRecord>(
         self: &Arc<Self>,
         method: &str,
-        args: serde_json::Value,
+        args: T,
     ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
-        let request = connection_args_request(&self.session_id, args)?;
+        let request = typed_request(args)?;
         let response = self.call(method, &request)?;
         self.reader_from_response(&response)
     }
@@ -1195,8 +1196,12 @@ impl RemoteConnection {
         self.reader_from_response(&response)
     }
 
-    fn connection_schema_call(&self, method: &str, args: serde_json::Value) -> Result<Schema> {
-        let request = connection_args_request(&self.session_id, args)?;
+    fn connection_schema_call<T: protocol::RequestRecord>(
+        &self,
+        method: &str,
+        args: T,
+    ) -> Result<Schema> {
+        let request = typed_request(args)?;
         let response = self.call(method, &request)?;
         decode_schema_response(&response)
     }
@@ -1450,14 +1455,9 @@ fn statement_request(session_id: &str, statement_id: &str) -> Result<RecordBatch
     )?)
 }
 
-fn connection_args_request(session_id: &str, args: serde_json::Value) -> Result<RecordBatch> {
-    Ok(RecordBatch::try_new(
-        protocol::connection_args_schema(),
-        vec![
-            Arc::new(StringArray::from(vec![session_id.to_string()])),
-            Arc::new(StringArray::from(vec![args.to_string()])),
-        ],
-    )?)
+fn typed_request<T: protocol::RequestRecord>(value: T) -> Result<RecordBatch> {
+    protocol::encode_request(value, protocol::MAX_CONTROL_BYTES)
+        .map_err(|error| invalid(error.to_string()))
 }
 
 fn connection_binary_request(session_id: &str, payload: &[u8]) -> Result<RecordBatch> {
@@ -1475,16 +1475,11 @@ fn connection_option_request(
     key: &str,
     value: &OptionValue,
 ) -> Result<RecordBatch> {
-    let value = serde_json::to_string(&protocol::JsonOptionValue::from(value))
-        .map_err(|error| invalid(error.to_string()))?;
-    Ok(RecordBatch::try_new(
-        protocol::connection_option_schema(),
-        vec![
-            Arc::new(StringArray::from(vec![session_id.to_string()])),
-            Arc::new(StringArray::from(vec![key.to_string()])),
-            Arc::new(StringArray::from(vec![value])),
-        ],
-    )?)
+    typed_request(protocol::SetConnectionOptionRequest {
+        session_id: session_id.into(),
+        key: key.into(),
+        value: protocol::WireOptionValue::from(value),
+    })
 }
 
 fn connection_option_key_request(
@@ -1508,17 +1503,12 @@ fn statement_option_request(
     key: &str,
     value: &OptionValue,
 ) -> Result<RecordBatch> {
-    let value = serde_json::to_string(&protocol::JsonOptionValue::from(value))
-        .map_err(|error| invalid(error.to_string()))?;
-    Ok(RecordBatch::try_new(
-        protocol::statement_option_schema(),
-        vec![
-            Arc::new(StringArray::from(vec![session_id.to_string()])),
-            Arc::new(StringArray::from(vec![statement_id.to_string()])),
-            Arc::new(StringArray::from(vec![key.to_string()])),
-            Arc::new(StringArray::from(vec![value])),
-        ],
-    )?)
+    typed_request(protocol::SetStatementOptionRequest {
+        session_id: session_id.into(),
+        statement_id: statement_id.into(),
+        key: key.into(),
+        value: protocol::WireOptionValue::from(value),
+    })
 }
 
 fn statement_option_key_request(
@@ -1563,7 +1553,7 @@ fn result_request(session_id: &str, result_id: &str) -> Result<RecordBatch> {
     )?)
 }
 
-fn decode_response<T: protocol::VgiArrow>(batch: &RecordBatch) -> Result<T> {
+fn decode_response<T: protocol::ResponseRecord>(batch: &RecordBatch) -> Result<T> {
     protocol::decode_response(batch, protocol::MAX_CONTROL_BYTES)
         .map_err(|error| internal(error.to_string()))
 }
@@ -1866,7 +1856,9 @@ mod tests {
         assert_eq!(options[0].key, "uri");
         assert_eq!(
             options[0].value,
-            protocol::JsonOptionValue::String("postgresql://database.example/app".into())
+            protocol::WireOptionValue::from(&OptionValue::String(
+                "postgresql://database.example/app".into()
+            ))
         );
     }
 

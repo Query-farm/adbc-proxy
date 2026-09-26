@@ -25,7 +25,7 @@ identify the exact published protocol 0.2 candidate. Its quality job and all fou
 passed. The SDK and hello-world installed-wheel matrices also passed on
 Linux/macOS and Python 3.13/3.14.
 
-Protocol 0.3 source changes require a new candidate: the older artifacts are not
+Protocol 0.4 source changes require a new candidate: the older artifacts are not
 wire-compatible with the current native driver. Their recorded results remain
 historical evidence, not validation of the typed-response migration.
 
@@ -157,9 +157,9 @@ reviewed checksum separately from the download site.
 
 ## Remaining publication decision
 
-Protocol 0.3 uses published VGI-RPC `0.47.1`; it requires no new transport release.
+Protocol 0.4 uses published VGI-RPC `0.47.1`; it requires no new transport release.
 Choose the SDK/example release versions, then rebuild and pass these exact gates
-with a new protocol 0.3 candidate. Do not reuse the modified transport wheel from
+with a new protocol 0.4 candidate. Do not reuse the modified transport wheel from
 historical candidates or validate the current driver against their old SDK.
 Public repositories and a GitHub
 prerelease do not publish these wheels to a package index or approve a

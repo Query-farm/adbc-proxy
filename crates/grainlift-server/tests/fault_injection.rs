@@ -578,21 +578,22 @@ async fn incompatible_or_missing_versions_cannot_allocate_sessions() {
     let (endpoint, server) =
         start_server(Arc::clone(&manager), Duration::from_secs(1), false).await;
     tokio::task::spawn_blocking(move || {
-        let request = RecordBatch::try_new(
-            protocol::open_connection_schema(),
-            vec![
-                Arc::new(StringArray::from(vec!["fault"])),
-                Arc::new(StringArray::from(vec!["[]"])),
-                Arc::new(StringArray::from(vec!["[]"])),
-            ],
+        let request = protocol::encode_request(
+            protocol::OpenConnectionRequest {
+                target: "fault".into(),
+                database_options: vec![],
+                connection_options: vec![],
+            },
+            protocol::MAX_CONTROL_BYTES,
         )
         .unwrap();
         for version in [
             None,
             Some("0.2.0"),
-            Some("0.3."),
-            Some("0.3.invalid"),
-            Some("0.4.0"),
+            Some("0.3.0"),
+            Some("0.4."),
+            Some("0.4.invalid"),
+            Some("0.5.0"),
         ] {
             let mut builder =
                 HttpClient::connect(endpoint.clone()).protocol(protocol::PROTOCOL_NAME);
@@ -612,7 +613,7 @@ async fn incompatible_or_missing_versions_cannot_allocate_sessions() {
         }
         let mut client = HttpClient::connect(endpoint.clone())
             .protocol(protocol::PROTOCOL_NAME)
-            .protocol_version("0.3.1")
+            .protocol_version("0.4.1")
             .build()
             .unwrap();
         let (response, _) = client
@@ -733,12 +734,12 @@ async fn oversized_typed_result_response_reclaims_query_and_metadata_cursors() {
             .build()
             .unwrap();
         let execute = statement_request(&session_id, &statement_id);
-        let metadata = RecordBatch::try_new(
-            protocol::connection_args_schema(),
-            vec![
-                Arc::new(StringArray::from(vec![session_id.as_str()])),
-                Arc::new(StringArray::from(vec!["{\"codes\":null}"])),
-            ],
+        let metadata = protocol::encode_request(
+            protocol::GetInfoRequest {
+                session_id: session_id.clone(),
+                codes: None,
+            },
+            protocol::MAX_CONTROL_BYTES,
         )
         .unwrap();
         for (method, request) in [

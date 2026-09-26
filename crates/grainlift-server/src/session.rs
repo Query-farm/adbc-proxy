@@ -100,6 +100,7 @@ impl TargetAuthorizer {
 }
 
 pub struct SessionManager {
+    partition_signer: crate::partitions::PartitionSigner,
     backend: Arc<dyn Backend>,
     targets: HashMap<String, TargetConfig>,
     registry: Mutex<SessionRegistry>,
@@ -278,6 +279,7 @@ impl SessionManager {
         debug_assert!(limits.validate().is_ok());
         debug_assert!(!operation_timeout.is_zero());
         Self {
+            partition_signer: crate::partitions::PartitionSigner::new(ttl),
             backend,
             targets,
             registry: Mutex::new(SessionRegistry::default()),
@@ -299,6 +301,26 @@ impl SessionManager {
         } else {
             Ok("\0anonymous".to_string())
         }
+    }
+
+    pub fn seal_partition(
+        &self,
+        session: &Session,
+        descriptor: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<u8>, AdbcError> {
+        self.partition_signer
+            .seal(&session.target, &session.principal, descriptor, limit)
+    }
+
+    pub fn open_partition(
+        &self,
+        session: &Session,
+        token: &[u8],
+        limit: usize,
+    ) -> Result<Vec<u8>, AdbcError> {
+        self.partition_signer
+            .open(&session.target, &session.principal, token, limit)
     }
 
     pub fn open(

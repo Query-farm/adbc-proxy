@@ -371,10 +371,12 @@ the native ADBC client against a deterministic Python worker. Run
 `./validation/run_regression.sh` for its Python quality gates and HTTP integration
 tests. It requires the sibling development toolkit and published VGI-RPC.
 
-Protocol 0.3.0 uses [typed response records](docs/typed-protocol.md) with the
-standard VGI-RPC unary envelope. Upgrade native drivers, servers and the Python
-toolkit together; protocol 0.2 peers are incompatible. Nested IPC is uncompressed;
-compression belongs to the transport.
+Protocol 0.4.0 uses [typed request and response records](docs/typed-protocol.md)
+with standard VGI-RPC envelopes, typed options and explicit metadata filters.
+Upgrade native drivers, servers and the Python toolkit together; older wire
+versions are incompatible. Nested IPC is uncompressed; compression belongs to
+the transport. The [ADBC surface review](docs/adbc-protocol-review.md) separates
+protocol coverage from capabilities each backend must implement.
 
 The [Python worker toolkit](https://github.com/Query-farm/grainlift-python) exposes
 transactions, prepared statements, parameter batches/streams, ingestion, metadata,

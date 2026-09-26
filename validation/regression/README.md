@@ -34,7 +34,7 @@ metadata, partition and Substrait hooks.
 
 Requires Python 3.13+, uv, Rust 1.97+, and the sibling grainlift-python checkout.
 VGI-RPC resolves from the package index; no transport checkout or custom runtime
-patch is required. Protocol 0.3 uses typed response records and uncompressed
+patch is required. Protocol 0.4 uses typed request/response records and uncompressed
 nested IPC, with compression handled by the transport. The toolkit path override
 in pyproject.toml is deliberate.
 

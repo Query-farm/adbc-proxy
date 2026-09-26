@@ -31,9 +31,11 @@ use thiserror::Error;
 
 mod responses;
 pub use responses::*;
+mod requests;
+pub use requests::*;
 
 pub const PROTOCOL_NAME: &str = "org.queryfarm.Grainlift.v1";
-pub const PROTOCOL_VERSION: &str = "0.3.0";
+pub const PROTOCOL_VERSION: &str = "0.4.0";
 /// Default cumulative native parameter-stream budget.
 pub const MAX_BIND_STREAM_BYTES: usize = 64 * 1024 * 1024;
 /// Current deployed VGI Rust implementation's message compatibility ceiling.
@@ -107,6 +109,7 @@ pub enum ProtocolError {
     InvalidWire(String),
 }
 
+/// Operator configuration JSON only; RPC options use [`WireOptionValue`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum JsonOptionValue {
@@ -150,22 +153,12 @@ impl From<&OptionValue> for JsonOptionValue {
     }
 }
 
+/// Operator configuration only; this is not an RPC request or compatibility codec.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WireOption {
     pub key: String,
     #[serde(flatten)]
     pub value: JsonOptionValue,
-}
-
-pub fn encode_options(options: &[WireOption]) -> Result<String, ProtocolError> {
-    Ok(serde_json::to_string(options)?)
-}
-
-pub fn decode_options(value: &str) -> Result<Vec<(String, OptionValue)>, ProtocolError> {
-    serde_json::from_str::<Vec<WireOption>>(value)?
-        .into_iter()
-        .map(|option| Ok((option.key, option.value.into_adbc()?)))
-        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +201,20 @@ impl From<&AdbcError> for WireAdbcError {
 
 impl WireAdbcError {
     pub fn into_adbc(self) -> AdbcError {
+        self.try_into_adbc().unwrap_or_else(|_| {
+            AdbcError::with_message_and_status("Malformed remote ADBC error", Status::InvalidData)
+        })
+    }
+
+    pub fn try_into_adbc(self) -> Result<AdbcError, ProtocolError> {
+        if self.sqlstate.len() != 5
+            || self.sqlstate.iter().any(|byte| *byte < 0)
+            || (status_from_name(&self.status) == Status::Unknown && self.status != "unknown")
+        {
+            return Err(ProtocolError::InvalidWire(
+                "invalid ADBC error status or SQLSTATE".into(),
+            ));
+        }
         let mut sqlstate = [0 as std::os::raw::c_char; 5];
         for (destination, source) in sqlstate.iter_mut().zip(self.sqlstate) {
             *destination = std::os::raw::c_char::from_ne_bytes(source.to_ne_bytes());
@@ -218,17 +225,19 @@ impl WireAdbcError {
             .map(|(key, value)| {
                 let value = base64::engine::general_purpose::STANDARD
                     .decode(value)
-                    .unwrap_or_default();
-                (key, value)
+                    .map_err(|_| {
+                        ProtocolError::InvalidWire("invalid ADBC error detail encoding".into())
+                    })?;
+                Ok((key, value))
             })
-            .collect::<Vec<_>>();
-        AdbcError {
+            .collect::<Result<Vec<_>, ProtocolError>>()?;
+        Ok(AdbcError {
             message: self.message,
             status: status_from_name(&self.status),
             vendor_code: self.vendor_code,
             sqlstate,
             details: (!details.is_empty()).then_some(details),
-        }
+        })
     }
 }
 
@@ -280,14 +289,6 @@ pub fn empty_response_schema() -> SchemaRef {
     )]))
 }
 
-pub fn open_connection_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("target", DataType::Utf8, false),
-        Field::new("database_options_json", DataType::Utf8, false),
-        Field::new("connection_options_json", DataType::Utf8, false),
-    ]))
-}
-
 pub fn session_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![Field::new(
         "session_id",
@@ -303,25 +304,10 @@ pub fn statement_schema() -> SchemaRef {
     ]))
 }
 
-pub fn connection_args_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("session_id", DataType::Utf8, false),
-        Field::new("args_json", DataType::Utf8, false),
-    ]))
-}
-
 pub fn connection_binary_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("session_id", DataType::Utf8, false),
         Field::new("payload", DataType::Binary, false),
-    ]))
-}
-
-pub fn connection_option_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("session_id", DataType::Utf8, false),
-        Field::new("key", DataType::Utf8, false),
-        Field::new("value_json", DataType::Utf8, false),
     ]))
 }
 
@@ -338,15 +324,6 @@ pub fn set_sql_schema() -> SchemaRef {
         Field::new("session_id", DataType::Utf8, false),
         Field::new("statement_id", DataType::Utf8, false),
         Field::new("sql", DataType::Utf8, false),
-    ]))
-}
-
-pub fn statement_option_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("session_id", DataType::Utf8, false),
-        Field::new("statement_id", DataType::Utf8, false),
-        Field::new("key", DataType::Utf8, false),
-        Field::new("value_json", DataType::Utf8, false),
     ]))
 }
 
@@ -520,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_options_round_trip() {
+    fn configured_options_round_trip() {
         let options = vec![
             WireOption {
                 key: "s".into(),
@@ -537,9 +514,9 @@ mod tests {
                 value: JsonOptionValue::Int(42),
             },
         ];
-        let encoded = encode_options(&options).unwrap();
-        let decoded = decode_options(&encoded).unwrap();
-        assert_eq!(decoded.len(), 3);
+        let encoded = serde_json::to_string(&options).unwrap();
+        let decoded: Vec<WireOption> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, options);
     }
 
     #[test]
@@ -559,5 +536,25 @@ mod tests {
         let decoded = wire.into_adbc();
         assert_eq!(decoded.status, Status::Cancelled);
         assert_eq!(decoded.sqlstate, error.sqlstate);
+    }
+
+    #[test]
+    fn malformed_remote_error_fields_are_rejected_without_silent_changes() {
+        let source = AdbcError::with_message_and_status("failure", Status::IO);
+        for state in [vec![], vec![0; 4], vec![0; 6], vec![-1; 5]] {
+            let mut wire = WireAdbcError::from(&source);
+            wire.sqlstate = state;
+            assert!(wire.clone().try_into_adbc().is_err());
+            assert_eq!(wire.into_adbc().status, Status::InvalidData);
+        }
+        let mut wire = WireAdbcError::from(&source);
+        wire.details = vec![("binary".into(), "invalid base64!".into())];
+        assert!(wire.try_into_adbc().is_err());
+        let mut wire = WireAdbcError::from(&source);
+        wire.status = "nonexistent".into();
+        assert!(wire.try_into_adbc().is_err());
+        let mut json = serde_json::to_value(WireAdbcError::from(&source)).unwrap();
+        json["vendor_code"] = serde_json::json!(i64::from(i32::MAX) + 1);
+        assert!(serde_json::from_value::<WireAdbcError>(json).is_err());
     }
 }

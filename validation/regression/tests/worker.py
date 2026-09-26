@@ -35,12 +35,16 @@ class Plan:
         batches: Predetermined test batches; never production data.
         fail_after: Raise an ADBC error after this many successful batch reads.
         delay_seconds: Delay each batch read for request-timeout tests.
+        read_started: Signal entry into a deliberately blocked batch callback.
+        read_release: Hold the callback until the test permits bounded cleanup.
     """
 
     schema: pa.Schema
     batches: tuple[pa.RecordBatch, ...] = ()
     fail_after: int | None = None
     delay_seconds: float = 0
+    read_started: threading.Event | None = None
+    read_release: threading.Event | None = None
 
 
 class ProbeIterator(Iterator[pa.RecordBatch]):
@@ -62,6 +66,10 @@ class ProbeIterator(Iterator[pa.RecordBatch]):
         if self.closed:
             raise StopIteration
         self.pulls += 1
+        if self.plan.read_started is not None:
+            self.plan.read_started.set()
+        if self.plan.read_release is not None and not self.plan.read_release.wait(timeout=30):
+            raise AdbcError("Fixture read gate watchdog expired", "timeout")
         if self.plan.delay_seconds:
             time.sleep(self.plan.delay_seconds)
         if self.plan.fail_after == self._position:

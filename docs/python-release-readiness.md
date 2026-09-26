@@ -35,18 +35,25 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 | Gate | Current evidence | Status |
 |---|---|---|
 | SDK code quality | Ruff, format, strict mypy and isolated pydoclint across SDK source/tests; `py.typed` included | Passed locally |
+| ADBC operation surface | All 31 wire methods routed; 283 SDK tests and 130 native regression tests; direct/isolated transaction, binding, ingestion and metadata coverage | Passed locally; SDK wheel CI passed all four platform/interpreter jobs |
 | Native failure behavior | Deadlines, crashes, statement/connection cancellation, raw release, client death, shutdown and recovery in independent processes | Passed locally |
 | Credential rotation | Atomic replacement, overlap/revocation, principal ownership and signed continuations | Passed locally |
 | Reproducible packaging | Exact hashed wheels and dependency closure; all three wheels rebuild byte-for-byte from sdists; forbidden payload checks | Passed locally |
-| Fresh installation | Historical candidate v2: 240 tests without skips on Python 3.13.12 and 3.14.7; new operation coverage requires its own candidate | v2 passed locally on macOS arm64 |
+| Fresh installation | Candidate v3: 440 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
 | Load and cleanup | Eight clients, 180/300-second native Waitress runs, injected errors and connection churn; no unexpected errors, child or descriptor leak observed | Measured; memory/long-duration gate remains open |
 | TLS edge | Real Caddy/Waitress HTTPS, certificate/hostname failures, verified Python RPC, authentication, limits, logs and draining | Passed locally; native HTTPS success remains unverified |
-| Runtime CI | Historical candidate v2 passed Linux/macOS × Python 3.13/3.14 with an explicit HTTPS URL and reviewed SHA-256 | v2 passed; each new candidate requires a fresh run |
-| Publication | Public source repositories and candidate v2 prerelease available; package-index releases remain separate | PyPI release versions/dependency floors pending |
+| Runtime CI | SDK wheel matrix passed Linux/macOS × Python 3.13/3.14; three combined v3 jobs passed, macOS 3.14 exposed a timing-sensitive timeout test | Deterministic timeout regression required for next candidate |
+| Publication | Public source repositories and candidate v3 prerelease available; package-index releases remain separate | PyPI release versions/dependency floors pending |
 | Target operations | Resource quotas, affinity, credential rotation and supervisor/shutdown contract documented | Real deployment/cgroup, certificate renewal and signal checks pending |
 
 ## Defects fixed during the gates
 
+- VGI-RPC mistook zero-column bidirectional parameter exchanges for output-only
+  producers. Explicit exchange direction now preserves binding semantics.
+- Isolated result cleanup could replace a primary structured ADBC error if the
+  backend also failed while closing its cursor. Cleanup now preserves that error.
+- Statement close removes the cancellation target before invoking backend cleanup,
+  preventing cancellation from entering a statement already being closed.
 - Grainlift's native HTTP client ignored the configured timeout when using a
   shared Reqwest client. It now configures the timeout on that client.
 - Isolated worker startup errors could leave parent pipe handles open.
@@ -59,6 +66,14 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
   allowlists and archive/wheel payload validation prevent that release leakage.
 
 ## Reviewable release artifact
+
+[Candidate v3](../validation/release-results/candidate-v3/README.md) contains the
+complete operation surface and its installed-package evidence. It is available as
+a [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v3),
+archive SHA-256 `ad414e90374b83542a97ac544901ed62c54fc70c8f61a7726fe5623194a9c520`.
+Its [combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36220548858)
+is separate from the passing
+[SDK matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36220380809).
 
 [Candidate v2](../validation/release-results/candidate-v2/README.md) is locally
 available at `target/python-release-candidate-v2/grainlift-python-candidate.tar.gz`,

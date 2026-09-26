@@ -15,6 +15,7 @@
 
 """Independent connections, statement reuse, resource limits, and request timeout."""
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -107,21 +108,43 @@ def test_request_timeout_recovery(harness: Harness) -> None:
     """Distinguish an HTTP request timeout from unsupported downstream cancellation."""
     schema = pa.schema([("n", pa.int64())])
     batch = pa.record_batch([[42]], schema=schema)
-    harness.worker.plans["SELECT slow"] = Plan(schema, (batch,), delay_seconds=0.3)
+    read_started = threading.Event()
+    read_release = threading.Event()
+    request_timed_out = threading.Event()
+    harness.worker.plans["SELECT slow"] = Plan(schema, (batch,), read_started=read_started, read_release=read_release)
     harness.worker.plans["SELECT fast"] = Plan(schema, (batch,))
-    with (
-        harness.connect(options={"grainlift.request_timeout_ms": 200}) as connection,
-        connection.cursor() as cursor,
-        pytest.raises((manager.Error, pa.ArrowException)),
-    ):
-        cursor.execute("SELECT slow")
-        # If execution succeeds unexpectedly, still import/close the stream
-        # so a failing assertion cannot block the server via raw release.
-        with cursor.fetch_record_batch() as reader:
-            reader.read_next_batch()
-    # The callback is cooperative and finishes on its own; the timeout does not
-    # terminate Python code. Wait only for that bounded fixture operation.
-    deadline = time.monotonic() + 2
+
+    def query() -> None:
+        with (
+            harness.connect(options={"grainlift.request_timeout_ms": 200}) as connection,
+            connection.cursor() as cursor,
+        ):
+            try:
+                cursor.execute("SELECT slow")
+                # Import any returned stream before cleanup so raw Arrow handle
+                # release cannot hold the GIL while the Python server needs it.
+                with cursor.fetch_record_batch() as reader:
+                    reader.read_next_batch()
+            except (manager.Error, pa.ArrowException):
+                # Record the timeout before context cleanup tries another RPC
+                # against the session with its callback deliberately held.
+                request_timed_out.set()
+            else:
+                raise AssertionError("The blocked native request did not time out")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(query)
+        try:
+            assert read_started.wait(timeout=10), "Native request did not enter the worker callback"
+            assert request_timed_out.wait(timeout=10), "Blocked native request did not time out"
+            assert not read_release.is_set()
+            assert not harness.worker.connections[0].readers[0].closed
+        finally:
+            read_release.set()
+            pending.result(timeout=10)
+    # Request timeout does not terminate a Python callback. Explicitly release
+    # this cooperative fixture, then require eventual downstream cursor cleanup.
+    deadline = time.monotonic() + 10
     while any(not reader.closed for item in harness.worker.connections for reader in item.readers):
         assert time.monotonic() < deadline, "Timed-out cursor did not clean up"
         time.sleep(0.01)

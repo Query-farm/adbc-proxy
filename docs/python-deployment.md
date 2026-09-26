@@ -32,9 +32,11 @@ TCP/mTLS/Iroh serving is outside this SDK's scope. The native ADBC error vendor-
 sentinel limitation remains; status, SQLSTATE and binary details have separate
 regression coverage.
 
-Python 3.13 and 3.14 on macOS have local wheel-install/runtime evidence. Linux
-and macOS are the configured release-CI targets; a configured matrix is not a
-claim that remote CI ran. Windows is outside the validated release scope.
+Python 3.13 and 3.14 on macOS have local wheel-install/runtime evidence. The
+[SDK installed-wheel CI](https://github.com/Query-farm/grainlift-python/actions/runs/36220380809)
+also passed on Linux and macOS for the expanded operation surface. The combined
+native-driver release gate records its own candidate-specific evidence. Windows
+is outside the validated release scope.
 
 ## Process and network layout
 

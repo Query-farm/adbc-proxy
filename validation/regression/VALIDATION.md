@@ -28,11 +28,25 @@ unknown row counts, zero-row/zero-column binding and Substrait plan delegation. 
 standard response and metadata schemas. Ruff/format, strict mypy and isolated
 pydoclint passed for the expanded suite.
 
-This is source-checkout evidence. Fresh installed-package and remote CI evidence
-must identify the new candidate separately from the historical query-only v2 below.
+The [new candidate v3](../release-results/candidate-v3/README.md) separately passed
+**440 tests on each of Python 3.13.12 and 3.14.7**, installed from exact wheels in
+fresh macOS environments: 14 transport, 283 toolkit, 13 hello-world and 130 native
+regression cases, with no failures or skips. Runtime imports resolved inside
+`site-packages`; SDK Ruff/format, strict mypy and isolated pydoclint also passed.
+All three wheels rebuilt byte-for-byte from their source distributions. The
+[SDK Linux/macOS CI matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36220380809)
+passed all four interpreter/platform jobs; the
+[candidate v3 combined matrix](https://github.com/Query-farm/grainlift/actions/runs/36220548858)
+is tracked separately from the historical query-only v2 below.
 The SDK exposes backend hooks, not generic database behavior: SQLite is the real
 transaction/ingestion backend here, while metadata, partitions and Substrait use
 controlled fixture capabilities.
+
+Feature testing found two further defects now covered by regressions: VGI-RPC
+misclassified zero-column bidirectional exchanges as producers, and isolated
+result cleanup could mask a primary ADBC error when a backend's close method
+also failed. A statement-close/cancel race was also fixed so cancellation cannot
+enter a backend statement already being closed.
 
 ## Historical query-only candidate v2
 

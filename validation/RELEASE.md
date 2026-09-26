@@ -17,7 +17,14 @@ limitations under the License.
 
 # Python release candidate gate
 
-[Candidate v2 evidence](release-results/candidate-v2/README.md) records two
+[Candidate v3 evidence](release-results/candidate-v3/README.md) records 440 passing
+tests on each of Python 3.13.12 and 3.14.7, including the expanded operation surface.
+Its [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v3)
+and [combined CI run](https://github.com/Query-farm/grainlift/actions/runs/36220548858)
+identify the exact current candidate. The SDK's separate installed-wheel matrix
+passed on Linux/macOS and Python 3.13/3.14.
+
+[Historical candidate v2 evidence](release-results/candidate-v2/README.md) records two
 successful fresh-environment runs: 240 tests on each of Python 3.13.12 and
 3.14.7, plus SDK quality gates. These runs used macOS arm64; candidate v2 later
 passed the [Linux/macOS runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36218130106).
@@ -124,14 +131,14 @@ run it, and require its checks in branch protection. The public SDK repositories
 can build future candidates from immutable commits and supply the resulting
 reviewed artifact.
 
-After the exact candidate v2 archive and `SHA256SUMS` have been uploaded to the
-`python-candidate-v2` prerelease in `Query-farm/grainlift`, enable automatic runs
+After the exact candidate v3 archive and `SHA256SUMS` have been uploaded to the
+`python-candidate-v3` prerelease in `Query-farm/grainlift`, enable automatic runs
 and explicitly dispatch the workflow (the initial source push may have occurred
 before the variables were configured):
 
 ```sh
-candidate_url=https://github.com/Query-farm/grainlift/releases/download/python-candidate-v2/grainlift-python-candidate.tar.gz
-candidate_sha256=56c8ac49a858bdf199385338c7ebe08054625b7ae4c3631b2b1a87fe6d3f9c2b
+candidate_url=https://github.com/Query-farm/grainlift/releases/download/python-candidate-v3/grainlift-python-candidate.tar.gz
+candidate_sha256=ad414e90374b83542a97ac544901ed62c54fc70c8f61a7726fe5623194a9c520
 gh variable set GRAINLIFT_PYTHON_CANDIDATE_URL --repo Query-farm/grainlift --body "$candidate_url"
 gh variable set GRAINLIFT_PYTHON_CANDIDATE_SHA256 --repo Query-farm/grainlift --body "$candidate_sha256"
 gh workflow run python-regression.yml --repo Query-farm/grainlift --ref main \

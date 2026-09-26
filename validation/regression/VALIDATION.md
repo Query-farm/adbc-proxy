@@ -28,7 +28,7 @@ unknown row counts, zero-row/zero-column binding and Substrait plan delegation. 
 standard response and metadata schemas. Ruff/format, strict mypy and isolated
 pydoclint passed for the expanded suite.
 
-The [new candidate v3](../release-results/candidate-v3/README.md) separately passed
+The [current candidate v4](../release-results/candidate-v4/README.md) separately passed
 **440 tests on each of Python 3.13.12 and 3.14.7**, installed from exact wheels in
 fresh macOS environments: 14 transport, 283 toolkit, 13 hello-world and 130 native
 regression cases, with no failures or skips. Runtime imports resolved inside
@@ -36,8 +36,16 @@ regression cases, with no failures or skips. Runtime imports resolved inside
 All three wheels rebuilt byte-for-byte from their source distributions. The
 [SDK Linux/macOS CI matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36220380809)
 passed all four interpreter/platform jobs; the
-[candidate v3 combined matrix](https://github.com/Query-farm/grainlift/actions/runs/36220548858)
-is tracked separately from the historical query-only v2 below.
+[candidate v4 combined matrix](https://github.com/Query-farm/grainlift/actions/runs/36221096021)
+also passed quality and all four Linux/macOS Python 3.13/3.14 runtime jobs. Its
+evidence is separate from the historical query-only v2 below.
+
+Candidate v3 passed the same local totals, but one remote macOS/Python 3.14 job
+exposed the existing timeout test's narrow 200 ms/300 ms timing margin. V4 replaces
+that sleep with explicit callback synchronization and checks timeout before release,
+then cleanup and recovery. Setting the request timeout beyond the watchdog made
+the revised test fail as expected. The v4 wheels and dependency locks are identical
+to v3; both changed files are regression fixtures. Historical v3 results are retained.
 The SDK exposes backend hooks, not generic database behavior: SQLite is the real
 transaction/ingestion backend here, while metadata, partitions and Substrait use
 controlled fixture capabilities.

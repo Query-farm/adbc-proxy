@@ -39,11 +39,12 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 | Native failure behavior | Deadlines, crashes, statement/connection cancellation, raw release, client death, shutdown and recovery in independent processes | Passed locally |
 | Credential rotation | Atomic replacement, overlap/revocation, principal ownership and signed continuations | Passed locally |
 | Reproducible packaging | Exact hashed wheels and dependency closure; all three wheels rebuild byte-for-byte from sdists; forbidden payload checks | Passed locally |
-| Fresh installation | Candidate v3: 440 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
+| Fresh installation | Candidate v4: 440 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
 | Load and cleanup | Eight clients, 180/300-second native Waitress runs, injected errors and connection churn; no unexpected errors, child or descriptor leak observed | Measured; memory/long-duration gate remains open |
 | TLS edge | Real Caddy/Waitress HTTPS, certificate/hostname failures, verified Python RPC, authentication, limits, logs and draining | Passed locally; native HTTPS success remains unverified |
-| Runtime CI | SDK wheel matrix passed Linux/macOS × Python 3.13/3.14; three combined v3 jobs passed, macOS 3.14 exposed a timing-sensitive timeout test | Deterministic timeout regression required for next candidate |
-| Publication | Public source repositories and candidate v3 prerelease available; package-index releases remain separate | PyPI release versions/dependency floors pending |
+| Runtime CI | SDK, hello-world and combined candidate v4 matrices passed Linux/macOS × Python 3.13/3.14; v4 includes the synchronized timeout regression | Passed remotely |
+| Publication | Public source repositories and candidate v4 prerelease available; package-index releases remain separate | PyPI release versions/dependency floors pending |
+| Native ARM64 packaging | Separate Custom Test image pull returned registry `denied`; fallback Docker driver rejected a multi-platform build before compilation | Packaging infrastructure gate remains open |
 | Target operations | Resource quotas, affinity, credential rotation and supervisor/shutdown contract documented | Real deployment/cgroup, certificate renewal and signal checks pending |
 
 ## Defects fixed during the gates
@@ -67,12 +68,22 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 
 ## Reviewable release artifact
 
+[Candidate v4](../validation/release-results/candidate-v4/README.md) is the current
+[GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v4),
+archive SHA-256 `3fe5170b7fcd44eead68d995b4a2ee04900d6c580438d69aa2231b30f4d9f4ee`.
+Its wheels and dependency locks are byte-identical to v3; only the native timeout
+test and its fixture changed. The test now holds its callback until the client
+observes a timeout, then verifies cleanup and recovery. Deliberately extending
+the timeout past its watchdog makes it fail. Its
+[combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36221096021)
+passed all four platform/interpreter jobs against the exact reviewed archive.
+
 [Candidate v3](../validation/release-results/candidate-v3/README.md) contains the
 complete operation surface and its installed-package evidence. It is available as
 a [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v3),
 archive SHA-256 `ad414e90374b83542a97ac544901ed62c54fc70c8f61a7726fe5623194a9c520`.
 Its [combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36220548858)
-is separate from the passing
+exposed the timing-sensitive timeout test in one job and is separate from the passing
 [SDK matrix](https://github.com/Query-farm/grainlift-python/actions/runs/36220380809).
 
 [Candidate v2](../validation/release-results/candidate-v2/README.md) is locally
@@ -91,6 +102,11 @@ The [release instructions](../validation/RELEASE.md) define candidate creation,
 configuration, matrix execution and publication. Linux evidence comes from remote
 CI, separately from local macOS tests. Passing CI does not establish required
 branch-protection checks or actual deployment behavior.
+
+The independent [native ARM64 packaging job](https://github.com/Query-farm/grainlift/actions/runs/36220348135/job/108344790915)
+failed before compiling Grainlift. Its container image access and fallback builder
+configuration need repair; the successful Python/runtime checks do not establish
+native package-release readiness.
 
 ## Operational limits to retain
 

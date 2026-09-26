@@ -420,6 +420,10 @@ See the [validation guide](validation/README.md) for downstream prerequisites,
 payload-boundary tests, fault injection, load testing, and the
 [ADBC Driver Foundry](https://adbc-drivers.org/) suite. Recorded results and
 their environments are in [validation/RESULTS.md](validation/RESULTS.md).
+The [protocol 0.4 EC2 benchmarks](validation/load-results/ec2-v04-20260926/README.md)
+include remote load and memory/CPU profiles. Native load passed, while the
+Python-worker path showed low throughput and multi-second tails that remain an
+open performance gate despite passing correctness and cleanup checks.
 
 ## Repository layout
 

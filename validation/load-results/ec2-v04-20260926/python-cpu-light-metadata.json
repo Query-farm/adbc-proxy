@@ -1,0 +1,9 @@
+{
+  "host_pid": 3988672,
+  "rate_hz": 9,
+  "duration_seconds": 45,
+  "nonblocking": true,
+  "subprocesses_profiled": false,
+  "profiler_exit_code": 0,
+  "workload_exit_code": 0
+}

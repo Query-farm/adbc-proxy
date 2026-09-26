@@ -24,7 +24,7 @@ unmodified registry VGI-RPC 0.47.1. Its
 [prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v6)
 is published and configured for the
 [combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36246917438);
-the quality job passed and runtime jobs were running when recorded. Remote
+the quality job and all four runtime jobs passed. Remote
 combined runtime results are separate from local evidence.
 
 [Historical candidate v4 evidence](release-results/candidate-v4/README.md) records 440 passing

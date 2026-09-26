@@ -17,8 +17,73 @@
 
 # Validation results
 
-Latest Python-worker validation: 2026-09-26 on macOS 15.6.1 arm64.
-The downstream-driver results below retain their original 2026-09-23 provenance.
+Latest protocol 0.4 load and profiling: 2026-09-26 on EC2 Linux arm64.
+Earlier macOS and 2026-09-23 downstream-driver results below retain their
+original provenance and are not rewritten as current measurements.
+
+## Protocol 0.4 EC2 rerun — 2026-09-26
+
+The [full report and raw evidence](load-results/ec2-v04-20260926/README.md)
+record all runs, failed attempts, profiler limitations and source/binary hashes.
+Host: 48 ARM Neoverse-N1 cores, 92.6 GiB RAM, Amazon Linux 2023, kernel 6.18.41.
+Native source `915d9eb` was built in release mode with Rust 1.97.1; SDK `9ca8f36`
+used published VGI-RPC 0.47.1. The harness-only follow-up is `5c34118`.
+All compilation, workload tests, load and profiling ran remotely and sequentially;
+clients and servers shared that machine over loopback. Unrelated services had
+low observed activity. This is not a WAN or dedicated capacity measurement.
+
+Native workloads used 200,000 source rows, 2,048 result rows with 128-byte
+payloads, two warmup queries and 50 measured queries per independent session.
+All 11,200 measured queries completed without an application error.
+
+| Backend | Transport | Sessions | Queries/s | p95 / p99 ms | Peak server RSS MiB |
+| --- | --- | ---: | ---: | ---: | ---: |
+| SQLite 1.12.0 | HTTP | 32 | 1,064.4 | 31.6 / 32.2 | 182.0 |
+| DuckDB 1.5.5 | HTTP | 32 | 3,349.6 | 9.6 / 17.5 | 1,041.5 |
+| PostgreSQL driver 1.12.0 / server 14 | HTTP | 32 | 1,130.0 | 31.9 / 35.3 | 175.2 |
+| DuckDB 1.5.5 | TCP | 32 | 602.6 | 53.0 / 53.7 | 1,071.2 |
+| DuckDB 1.5.5 | mTLS | 32 | 605.4 | 52.9 / 53.6 | 1,131.0 |
+| DuckDB 1.5.5 | Iroh | 64 | 576.7 | 151.8 / 186.6 | 1,708.1 |
+
+These short runs are broadly similar to the historical EC2 throughput
+(-5.5% to +4.1%), but are single repetitions, not an optimization claim.
+
+The Python-worker workload used Python 3.14.7, native ADBC, Waitress and eight
+isolated connections. Each query verified 4,096 rows with 64-byte payloads in
+512-row batches, with connection churn every 25 queries and expected structured
+errors every ten queries. Deadlines and quotas were unchanged.
+
+| Run | Verified queries | Queries/s | p50 / p95 / p99 ms | Peak host / children RSS MiB |
+| --- | ---: | ---: | ---: | ---: |
+| 180 seconds | 767 | 4.24 | 398.6 / 8,799.3 / 9,817.1 | 126.2 / 613.5 |
+| 300 seconds, retry | 700 | 2.30 | 3,253.2 / 3,969.5 / 4,213.7 | 126.0 / 613.2 |
+
+Both passed with zero unexpected errors, fairness above 0.9998, zero remaining
+workers, host descriptors returning to 12 and normal shutdown. Host RSS grew
+about 5.2/3.9 MiB after the first 20 seconds. The original five-minute run aborted
+on a `psutil.AccessDenied` child-descriptor measurement; its report was lost.
+The retained failure record and sampler fix are explicit, and the successful
+retry reports zero incomplete child samples. Eleven focused tests and Python
+quality checks passed on EC2 before the retry.
+
+**Python-worker performance remains an open gate.** Low throughput and
+multi-second tails need investigation. The earlier macOS numbers use different
+hardware, protocol and transport code, so they do not isolate a 0.4 regression.
+No direct-ADBC overhead comparison or controlled before/after typing benchmark
+was performed here.
+
+Separate GC and tracemalloc diagnostics passed with zero unexpected errors and
+clean shutdown. Final Arrow allocations were 768 bytes; GC-run tracked objects
+fell to 61,239 after load, but RSS remained 124.7 MiB versus 88.4 MiB initially.
+The tracing run retained about 1.3 MiB of traced Python allocations. These short,
+instrumented runs do not establish a native-memory or RSS plateau.
+
+A broad 49 Hz CPU profile fell behind and recorded six workload errors; it is
+retained as a failed diagnostic. The lighter 9 Hz host-only profile's workload
+passed, but sampling lag and 68 failed stack reads limit precision. Captured
+stacks repeatedly include Arrow IPC, VGI serialization and Waitress HTTP paths;
+they are investigation leads, not a demonstrated root cause. Both Speedscope
+profiles and the allocation records are included in the linked evidence.
 
 ## Python-worker load and TLS edge — 2026-09-25
 

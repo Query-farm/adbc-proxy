@@ -42,9 +42,10 @@ passes Linux/macOS on Python 3.13/3.14. The published
 [candidate prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v6)
 is configured for the
 [combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36246917438).
-Its quality job passed; runtime jobs were still running when this record was
-written. The separate [native CI](https://github.com/Query-farm/grainlift/actions/runs/36246917417)
-was also running. Neither result is implied by the local tests above.
+Its quality job and all four runtime jobs passed. The separate
+[native CI](https://github.com/Query-farm/grainlift/actions/runs/36246917417) and
+[hello-world matrix](https://github.com/Query-farm/grainlift-hello-world-python/actions/runs/36246932486)
+also passed. These remote results are separate from the local tests above.
 
 The [ADBC review](../../../docs/adbc-protocol-review.md) maps every ADBC 1.1
 entry point and records backend and adapter limitations. This is not external

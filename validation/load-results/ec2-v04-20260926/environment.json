@@ -1,0 +1,45 @@
+{
+  "platform": "Linux-6.18.41-94.142.amzn2023.aarch64-aarch64-with-glibc2.34",
+  "cpu_count": 48,
+  "cpu": "ARM Neoverse-N1",
+  "memory_total_kib": 97092064,
+  "grainlift_revision": "915d9eb0c2242bbc2fbbfd84348e91471b239e1c",
+  "sdk_revision": "9ca8f3621320bd19c93afe243fbf3f523872c763",
+  "rust": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "uv": "uv 0.12.16 (aarch64-unknown-linux-gnu)",
+  "build_profile": "release",
+  "protocol_version": "0.4.0",
+  "location": "EC2 Linux ARM64; clients, host and downstream on this instance; loopback transports",
+  "followup_harness_revision": "5c34118e86ca11c4d2b6b3949e47e89e8d2b4822",
+  "native_python": "Python 3.13.15",
+  "worker_python": "Python 3.14.7",
+  "native_binary_sha256": {
+    "libadbc_driver_grainlift.so": "f441c8545ec3c43c13d25f026984c4f67c684e5f62a311b833f8cc90fbedbc2b",
+    "grainlift-server": "a6bff3ff57c31471465fdae39c9fb5671d55bbdbb4ff9fd57c0ccd31691fc1ff"
+  },
+  "downstream_drivers": {
+    "sqlite": {
+      "library": "/home/ec2-user/.config/adbc/drivers/sqlite_linux_arm64_v1.12.0/libadbc_driver_sqlite.so",
+      "sha256": "57a81d8053c47e107960ad4557e88ccb17c32291caf81ea67c3995588350cdfd"
+    },
+    "duckdb": {
+      "library": "/home/ec2-user/.config/adbc/drivers/duckdb_linux_arm64_v1.5.5/libduckdb.so",
+      "sha256": "d00d007f3f7ca1f2896a5e4b89c2ce141bf0508506a9d6d56f9598b8e59d074e"
+    },
+    "postgresql": {
+      "library": "/home/ec2-user/.config/adbc/drivers/postgresql_linux_arm64_v1.12.0/libadbc_driver_postgresql.so",
+      "sha256": "248923a6791591cbdfaa6718644980a28aa400a79b1a8c1efcf631a8bb748c94"
+    }
+  },
+  "postgresql_container_image": "postgres:14",
+  "postgresql_image_id": "sha256:649df4d4c0779f61e1bf3913add94e3026f6758a7349dafbf26dfef54b00415c",
+  "profile_tool": "py-spy 0.4.2",
+  "sampling_fix_validation": {
+    "focused_tests_passed": 11,
+    "ruff": true,
+    "ruff_format": true,
+    "strict_mypy": true,
+    "pydoclint": true,
+    "location": "EC2 host"
+  }
+}

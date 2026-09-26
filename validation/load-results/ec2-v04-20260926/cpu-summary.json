@@ -1,0 +1,100 @@
+{
+  "interpretation": "Sampled Python stack locations, not precise CPU time or proof of root cause. Profiles have observer effects and sampling limitations.",
+  "broad": {
+    "rate_hz": 49,
+    "subprocesses": true,
+    "samples": 3346,
+    "stack_read_errors": 0,
+    "maximum_reported_sampling_lag_seconds": 20.61,
+    "workload_passed": false,
+    "unexpected_workload_errors": 6
+  },
+  "light": {
+    "rate_hz": 9,
+    "requested_duration_seconds": 45,
+    "nonblocking": true,
+    "host_only": true,
+    "samples": 231,
+    "stack_read_errors": 68,
+    "maximum_reported_sampling_lag_seconds": 1.72,
+    "workload_passed": true,
+    "unexpected_workload_errors": 0,
+    "top_leaf_locations": [
+      {
+        "function": "__init__",
+        "file": "pyarrow/ipc.py",
+        "samples": 31
+      },
+      {
+        "function": "send",
+        "file": "waitress/wasyncore.py",
+        "samples": 25
+      },
+      {
+        "function": "serialize_record_batch",
+        "file": "vgi_rpc/utils.py",
+        "samples": 24
+      },
+      {
+        "function": "readable",
+        "file": "waitress/channel.py",
+        "samples": 20
+      },
+      {
+        "function": "read_next_batch_with_custom_metadata",
+        "file": "vgi_rpc/utils.py",
+        "samples": 15
+      },
+      {
+        "function": "_run_http_producer_turn",
+        "file": "vgi_rpc/http/server/_app_stream.py",
+        "samples": 14
+      },
+      {
+        "function": "writable",
+        "file": "waitress/channel.py",
+        "samples": 14
+      },
+      {
+        "function": "_pack_plaintext",
+        "file": "vgi_rpc/http/server/_state_token.py",
+        "samples": 9
+      },
+      {
+        "function": "_recv",
+        "file": "stdlib/multiprocessing/connection.py",
+        "samples": 9
+      },
+      {
+        "function": "_strict_response_stream",
+        "file": "vgi_rpc/http/server/_resources.py",
+        "samples": 8
+      },
+      {
+        "function": "_write_result_batch",
+        "file": "vgi_rpc/rpc/_wire.py",
+        "samples": 7
+      },
+      {
+        "function": "process_response",
+        "file": "vgi_rpc/http/server/_middleware.py",
+        "samples": 6
+      },
+      {
+        "function": "_decompress_body_zstd",
+        "file": "vgi_rpc/_codec.py",
+        "samples": 6
+      },
+      {
+        "function": "__next__",
+        "file": "grainlift/isolation.py",
+        "samples": 6
+      },
+      {
+        "function": "serialize_record_batch_bytes",
+        "file": "vgi_rpc/utils.py",
+        "samples": 6
+      }
+    ]
+  }
+}

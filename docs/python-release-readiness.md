@@ -74,9 +74,9 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 | Credential rotation | Atomic replacement, overlap/revocation, principal ownership and signed continuations | Passed locally |
 | Reproducible packaging | Exact hashed wheels and dependency closure; both local wheels rebuild byte-for-byte from sdists; stock registry VGI-RPC; forbidden payload checks | Passed locally |
 | Fresh installation | Candidate v6: 609 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
-| Load and cleanup | Eight clients, 180/300-second native Waitress runs, injected errors and connection churn; no unexpected errors, child or descriptor leak observed | Measured; memory/long-duration gate remains open |
+| Load and cleanup | Protocol 0.4 EC2 Python-worker runs: 4.24/2.30 queries/s at eight clients; multi-second tails, no unexpected errors or remaining workers in completed baselines | Performance investigation and memory/long-duration gates remain open |
 | TLS edge | Real Caddy/Waitress HTTPS, certificate/hostname failures, verified Python RPC, authentication, limits, logs and draining | Passed locally; native HTTPS success remains unverified |
-| Runtime CI | SDK 0.4 matrix passed Linux/macOS × Python 3.13/3.14; matching combined candidate v6 and hello-world results are tracked separately | Combined v6 matrix pending |
+| Runtime CI | SDK, hello-world and combined candidate v6 matrices passed Linux/macOS × Python 3.13/3.14 | Passed remotely |
 | Publication | Matching public source revisions and candidate v6 prerelease published; package-index releases remain separate | PyPI release versions/dependency floors pending |
 | Native ARM64 packaging | Separate Custom Test image pull returned registry `denied`; fallback Docker driver rejected a multi-platform build before compilation | Packaging infrastructure gate remains open |
 | Target operations | Resource quotas, affinity, credential rotation and supervisor/shutdown contract documented | Real deployment/cgroup, certificate renewal and signal checks pending |
@@ -121,8 +121,10 @@ SHA-256: `63692d5a6fb81208fdf468dd9e225e04646b33bf2dd5fee4978ccac3da8c3f3e`.
 The [prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v6)
 is published and repository variables select its exact archive. The
 [combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36246917438)
-passed its quality job and was running the four runtime jobs when this record
-was written. Those remote results are separate from the local evidence.
+passed its quality job and all four runtime jobs. The matching
+[native CI](https://github.com/Query-farm/grainlift/actions/runs/36246917417) and
+[hello-world matrix](https://github.com/Query-farm/grainlift-hello-world-python/actions/runs/36246932486)
+also passed. Those remote results are separate from the local evidence.
 
 [Candidate v4](../validation/release-results/candidate-v4/README.md) is a historical
 [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v4),
@@ -176,7 +178,12 @@ remain explicit. None of these constraints should be hidden by an unrestricted
 "production ready" label.
 
 The [load record](../validation/RESULTS.md) includes latency, fairness, memory and
-cleanup observations. Multi-minute local runs are useful regression evidence;
+cleanup observations. The [protocol 0.4 EC2 rerun](../validation/load-results/ec2-v04-20260926/README.md)
+passed native load and completed Python-worker correctness/cleanup checks, but
+found low Python throughput and multi-second tails. A harness sampling failure
+was fixed and retried; both attempts are retained. CPU profiles had observer
+effects and sampling limitations, so no precise root cause is claimed.
+Multi-minute loopback runs are useful regression evidence;
 they are not hours-long stability tests or capacity planning for a real database
 worker. Separate GC diagnostics found roughly stable tracked-object counts and
 released Arrow buffers, but did not establish an RSS plateau. Before rollout,

@@ -1,0 +1,106 @@
+         3560550 function calls (3531490 primitive calls) in 7.189 seconds
+
+   Ordered by: internal time
+   List reduced from 1003 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     3878  813.148    0.210    0.351    0.000 {method 'join' of '_thread._ThreadHandle' objects}
+     3780    1.161    0.000    1.208    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/pyarrow/ipc.py:50(__init__)
+     4260    0.762    0.000    0.770    0.000 {method 'send' of '_socket.socket' objects}
+     2123    0.238    0.000    0.729    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_identity.py:148(__post_init__)
+   380832    0.212    0.000    0.253    0.000 {built-in method builtins.isinstance}
+     4249    0.199    0.000    0.199    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+     4249    0.195    0.000    0.315    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/telemetry.py:25(_install_filters)
+     4249    0.156    0.000    5.941    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/app.py:403(__call__)
+     2130    0.120    0.000    0.270    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py:194(build_response_header)
+   204715    0.111    0.000    0.111    0.000 {method 'startswith' of 'str' objects}
+     2123    0.109    0.000    0.109    0.000 {method '__exit__' of 'zstandard.backend_c.ZstdCompressionWriter' objects}
+     4249    0.105    0.000    0.175    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py:370(start_response)
+     1939    0.098    0.000    0.098    0.000 {built-in method _thread.start_joinable_thread}
+   168370    0.092    0.000    0.092    0.000 {built-in method builtins.len}
+     1656    0.092    0.000    1.549    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app_stream.py:885(_run_http_producer_turn)
+     8498    0.085    0.000    0.185    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/_codec.py:81(parse_encoding_list)
+     6372    0.083    0.000    6.415    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/telemetry.py:56(__call__)
+     4249    0.075    0.000    1.107    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:407(process_request)
+    33968    0.073    0.000    0.117    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_identity.py:186(<genexpr>)
+   110595    0.068    0.000    0.068    0.000 {method 'lower' of 'str' objects}
+     2307    0.066    0.000    0.112    0.000 /home/ec2-user/.local/share/uv/python/cpython-3.14.7-linux-aarch64-gnu/lib/python3.14/inspect.py:3098(_bind)
+   105409    0.065    0.000    0.065    0.000 {method 'encode' of 'str' objects}
+    25491    0.064    0.000    0.099    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/request.py:1315(get_header)
+     4249    0.063    0.000    0.440    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:688(process_request)
+     4249    0.062    0.000    0.238    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:747(process_response)
+     2123    0.061    0.000    0.107    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/request.py:873(headers)
+     2307    0.060    0.000    1.358    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/server.py:42(call)
+    55412    0.059    0.000    0.059    0.000 {method 'set' of '_contextvars.ContextVar' objects}
+      184    0.058    0.000    0.083    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_state_token.py:528(_mint_call_token)
+78902/78896    0.055    0.000    0.055    0.000 {built-in method builtins.getattr}
+     1472    0.054    0.000    2.709    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app_stream.py:509(_run_stream_exchange_sync)
+    46706    0.052    0.000    0.080    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_identity.py:75(_require_unicode_scalar)
+    34052    0.050    0.000    0.072    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/response.py:709(set_header)
+    32058    0.050    0.000    0.888    0.000 {built-in method builtins.next}
+     4260    0.049    0.000    0.309    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/channel.py:345(write_soon)
+3886/3885    0.047    0.000    0.047    0.000 {built-in method posix.read}
+    40361    0.043    0.000    0.043    0.000 {method 'reset' of '_contextvars.ContextVar' objects}
+    10915    0.043    0.000    0.051    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/pyarrow/util.py:138(_stringify_path)
+4267/4266    0.043    0.000    0.866    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/channel.py:258(_flush_some)
+     1232    0.041    0.000    0.066    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/utils.py:336(serialize_record_batch)
+    61823    0.041    0.000    0.041    0.000 {method 'capitalize' of 'str' objects}
+     3355    0.040    0.000    0.070    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/pyarrow/ipc.py:88(__init__)
+4394/2348    0.040    0.000    1.362    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/soak/diagnose.py:87(timed)
+    54465    0.039    0.000    0.039    0.000 {method 'get' of 'dict' objects}
+      821    0.038    0.000    0.069    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/utils.py:1386(_serialize)
+    67936    0.036    0.000    0.036    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_identity.py:178(<genexpr>)
+     1656    0.036    0.000    0.085    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/nacl/bindings/crypto_aead.py:436(crypto_aead_xchacha20poly1305_ietf_encrypt)
+    67936    0.036    0.000    0.036    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_identity.py:187(<genexpr>)
+     9692    0.035    0.000    0.047    0.000 <frozen _collections_abc>:792(get)
+     1656    0.034    0.000    0.048    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_wire.py:551(_flush_collector)
+
+
+         3560550 function calls (3531490 primitive calls) in 7.189 seconds
+
+   Ordered by: cumulative time
+   List reduced from 1003 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     1939    0.004    0.000  813.023    0.419 /home/ec2-user/.local/share/uv/python/cpython-3.14.7-linux-aarch64-gnu/lib/python3.14/threading.py:975(start)
+     6372    0.083    0.000    6.415    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/telemetry.py:56(__call__)
+     4249    0.156    0.000    5.941    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/app.py:403(__call__)
+     1472    0.054    0.000    2.709    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app_stream.py:509(_run_stream_exchange_sync)
+     1472    0.031    0.000    2.005    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_resources.py:287(on_post)
+     1472    0.013    0.000    1.886    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app.py:209(_stream_exchange_sync)
+     1656    0.092    0.000    1.549    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app_stream.py:885(_run_http_producer_turn)
+4394/2348    0.040    0.000    1.362    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/soak/diagnose.py:87(timed)
+     2307    0.060    0.000    1.358    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/server.py:42(call)
+     3780    0.016    0.000    1.221    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/pyarrow/ipc.py:168(open_stream)
+     3780    1.161    0.000    1.208    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/pyarrow/ipc.py:50(__init__)
+     4249    0.075    0.000    1.107    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:407(process_request)
+     1656    0.003    0.000    1.074    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_types.py:504(process)
+     1656    0.008    0.000    1.071    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/protocol.py:160(produce)
+     1656    0.024    0.000    1.006    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/isolation.py:451(__next__)
+    32058    0.050    0.000    0.888    0.000 {built-in method builtins.next}
+4267/4266    0.043    0.000    0.866    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/channel.py:258(_flush_some)
+     1656    0.033    0.000    0.838    0.001 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/server.py:476(next_batch)
+      467    0.009    0.000    0.832    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_resources.py:144(on_post)
+     1938    0.012    0.000    0.813    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/isolation.py:583(_rpc)
+      467    0.004    0.000    0.798    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app.py:199(_unary_sync)
+      467    0.032    0.000    0.794    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app_unary.py:54(_run_unary_sync)
+     4260    0.011    0.000    0.781    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/wasyncore.py:390(send)
+     4260    0.762    0.000    0.770    0.000 {method 'send' of '_socket.socket' objects}
+     1939    0.023    0.000    0.752    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/isolation.py:545(_exchange)
+     2123    0.238    0.000    0.729    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/rpc/_identity.py:148(__post_init__)
+2131/2074    0.029    0.000    0.594    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py:305(write)
+     3878    0.022    0.000    0.481    0.000 /home/ec2-user/.local/share/uv/python/cpython-3.14.7-linux-aarch64-gnu/lib/python3.14/threading.py:1097(join)
+     4249    0.063    0.000    0.440    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:688(process_request)
+      184    0.002    0.000    0.399    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app.py:205(_stream_init_sync)
+      184    0.012    0.000    0.397    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_app_stream.py:208(_run_stream_init_sync)
+      184    0.004    0.000    0.360    0.002 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_resources.py:229(on_post)
+     3878  813.148    0.210    0.351    0.000 {method 'join' of '_thread._ThreadHandle' objects}
+     4249    0.195    0.000    0.315    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift-python/src/grainlift/telemetry.py:25(_install_filters)
+     4260    0.049    0.000    0.309    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/channel.py:345(write_soon)
+     2130    0.120    0.000    0.270    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py:194(build_response_header)
+   380832    0.212    0.000    0.253    0.000 {built-in method builtins.isinstance}
+     4249    0.026    0.000    0.246    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:659(_pick_response_encoding)
+     1472    0.009    0.000    0.246    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_state_token.py:678(_mint_cursor_token)
+     4249    0.062    0.000    0.238    0.000 /home/ec2-user/Development/grainlift-benchmark-20260926-v04/grainlift/validation/regression/.venv/lib/python3.14/site-packages/vgi_rpc/http/server/_middleware.py:747(process_response)
+
+

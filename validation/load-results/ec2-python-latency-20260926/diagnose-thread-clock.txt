@@ -28,11 +28,6 @@ decisions. This is a diagnostic counterfactual, not a supported Waitress fix.
 GRAINLIFT_DIAGNOSTIC_LOOP_TIMEOUT defaults to 1; use 0.1 to reproduce the old
 host's integer-coercion bug. GRAINLIFT_DIAGNOSTIC_POLL enables event counters
 with substantial observer overhead; do not treat those runs as capacity data.
-GRAINLIFT_DIAGNOSTIC_CPU_PROFILE writes aggregate cProfile call rankings. The
-default wall clock includes I/O and scheduling waits, not just CPU work.
-GRAINLIFT_DIAGNOSTIC_PROFILE_CLOCK=thread_cpu reproduces a rejected diagnostic
-whose CPython 3.14 totals were inconsistent. This intrusive mode supports the
-bounded Waitress thread pool only; it is not suitable for capacity comparisons.
 The companion timing report identifies host/worker overrides; the existing
 soak report's static transport description still describes the default host.
 """
@@ -128,11 +123,7 @@ class _TimedApplication:
         if os.environ.get("GRAINLIFT_DIAGNOSTIC_CPU_PROFILE"):
             profiler = getattr(self._profile_local, "profiler", None)
             if profiler is None:
-                profiler = (
-                    cProfile.Profile(timer=time.thread_time)
-                    if os.environ.get("GRAINLIFT_DIAGNOSTIC_PROFILE_CLOCK") == "thread_cpu"
-                    else cProfile.Profile()
-                )
+                profiler = cProfile.Profile(timer=time.thread_time)
                 self._profile_local.profiler = profiler
                 with _lock:
                     self._profiles.append(profiler)
@@ -308,10 +299,7 @@ def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, 
     Path(os.environ["GRAINLIFT_DIAGNOSTIC_OUTPUT"]).write_text(json.dumps(report, indent=2) + "\n")
     if profile_output := os.environ.get("GRAINLIFT_DIAGNOSTIC_CPU_PROFILE"):
         with Path(profile_output).open("w") as stream:
-            stats: Any = pstats.Stats(*app._profiles, stream=stream)
-            inconsistent = sum(tt < 0 or ct < tt - 1e-6 for _, _, tt, ct, _ in stats.stats.values())
-            stream.write(f"Profile clock: {os.environ.get('GRAINLIFT_DIAGNOSTIC_PROFILE_CLOCK', 'wall')}\n")
-            stream.write(f"Inconsistent timing entries: {inconsistent}\n")
+            stats = pstats.Stats(*app._profiles, stream=stream)
             stats.sort_stats("tottime").print_stats(50)
             stats.sort_stats("cumulative").print_stats(40)
 
@@ -337,13 +325,10 @@ def main() -> None:
         "GRAINLIFT_DIAGNOSTIC_WORKER": {"direct", "isolated"},
         "GRAINLIFT_DIAGNOSTIC_HTTP": {"waitress", "wsgiref"},
         "GRAINLIFT_DIAGNOSTIC_READINESS": {"observe", "skip_locked"},
-        "GRAINLIFT_DIAGNOSTIC_PROFILE_CLOCK": {"wall", "thread_cpu"},
     }
     for name, allowed in choices.items():
         if name in os.environ and os.environ[name] not in allowed:
             raise SystemExit(f"Unsupported {name}")
-    if os.environ.get("GRAINLIFT_DIAGNOSTIC_CPU_PROFILE") and os.environ.get("GRAINLIFT_DIAGNOSTIC_HTTP") == "wsgiref":
-        raise SystemExit("CPU profiling requires the bounded Waitress thread pool")
     runner._host = _host
     runner.main()
 

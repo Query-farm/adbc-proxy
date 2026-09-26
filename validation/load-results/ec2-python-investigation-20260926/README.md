@@ -174,5 +174,5 @@ recorded evidence checksums verified. No Rust source changed.
 The final maintained diagnostic module completed a separate five-second
 functional smoke: 200 verified queries, zero unexpected errors, effective
 timeout `1`, zero remaining workers and normal shutdown. Its recorded source
-hash matches the checked-in diagnostic module. This smoke validates the final
+hash matches the diagnostic module at commit `3d99412`. This smoke validates that
 harness changes; its startup-heavy throughput is not a capacity claim.

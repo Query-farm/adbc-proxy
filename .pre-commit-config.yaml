@@ -35,7 +35,8 @@ repos:
     rev: 2ccb47ff45ad361a21071a7eedda4c37e6ae8c5a
     hooks:
       - id: codespell
-        exclude: "Cargo\\.(toml|lock)$"
+        # Generated Cargo logs include dependency names such as `inout`.
+        exclude: "Cargo\\.(toml|lock)$|^validation/load-results/ec2-python-latency-20260926/rust-(test|clippy)\\.txt$"
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c
@@ -47,13 +48,13 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
-        # Preserve original JUnit and profiler payloads byte-for-byte.
-        exclude: ^validation/(release-results/candidate-[^/]+/.*\.xml|load-results/[^/]+/.*\.speedscope\.json)$
+        # Preserve original JUnit, profiler and diagnostic-log payloads byte-for-byte.
+        exclude: ^validation/(release-results/candidate-[^/]+/.*\.xml|load-results/[^/]+/.*\.speedscope\.json|load-results/ec2-python-latency-20260926/.*\.txt)$
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: trailing-whitespace
         # Preserve unified-diff context and generated JUnit failure text.
-        exclude: ^validation/(hardening/grainlift-python\.patch|release-results/candidate-[^/]+/.*\.xml)$
+        exclude: ^validation/(hardening/grainlift-python\.patch|diagnostics/.*\.patch|load-results/[^/]+/.*\.patch\.txt|release-results/candidate-[^/]+/.*\.xml)$
 
   - repo: https://github.com/adbc-drivers/dev
     rev: ffdbb1a1237b89cafb15a7420667f54838986681

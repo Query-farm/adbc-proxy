@@ -1,0 +1,81 @@
+{
+  "metrics": {
+    "wsgi_response_iteration": {
+      "count": 22830.0,
+      "wall_seconds": 126.8212064818672,
+      "thread_cpu_seconds": 20.0056360989999,
+      "max_wall_seconds": 0.03176045199870714
+    },
+    "http_OPTIONS": {
+      "count": 11415.0,
+      "wall_seconds": 1.453881601948524,
+      "thread_cpu_seconds": 1.4148189980000003,
+      "max_wall_seconds": 0.008929429999625427
+    },
+    "Service._request": {
+      "count": 8.0,
+      "wall_seconds": 0.05781060100161994,
+      "thread_cpu_seconds": 0.010283463999999999,
+      "max_wall_seconds": 0.008901237000827678
+    },
+    "Service._response": {
+      "count": 2214.0,
+      "wall_seconds": 15.031208425962177,
+      "thread_cpu_seconds": 1.3426661059999976,
+      "max_wall_seconds": 0.01828059400031634
+    },
+    "Service.open_connection": {
+      "count": 8.0,
+      "wall_seconds": 0.08667708799839602,
+      "thread_cpu_seconds": 0.016297410999999998,
+      "max_wall_seconds": 0.012679845000093337
+    },
+    "http_POST": {
+      "count": 11415.0,
+      "wall_seconds": 125.48390407203988,
+      "thread_cpu_seconds": 18.69477680400001,
+      "max_wall_seconds": 0.031766342999617336
+    },
+    "Service.execute": {
+      "count": 1091.0,
+      "wall_seconds": 8.440213747009693,
+      "thread_cpu_seconds": 0.7988888129999976,
+      "max_wall_seconds": 0.014854394999929355
+    },
+    "Service.read_result": {
+      "count": 988.0,
+      "wall_seconds": 0.036880561036014115,
+      "thread_cpu_seconds": 0.03623403300000282,
+      "max_wall_seconds": 5.663200136041269e-05
+    },
+    "Service.next_batch": {
+      "count": 8892.0,
+      "wall_seconds": 4.3742714810287,
+      "thread_cpu_seconds": 1.9707816520000108,
+      "max_wall_seconds": 0.009997611001381301
+    }
+  },
+  "host_elapsed_seconds": 33.290417543999865,
+  "host_cpu_seconds": 25.222406019,
+  "switch_interval": 0.005,
+  "remaining_children": 0,
+  "worker": "direct",
+  "http_host": "waitress",
+  "send_bytes_override": null,
+  "readiness_mode": "skip_locked",
+  "readiness_counts": {
+    "calls": 205718,
+    "ready": 21291,
+    "ready_while_output_locked": 21291,
+    "suppressed": 21291
+  },
+  "read_counts": {
+    "calls": 22838,
+    "already_disconnected": 0,
+    "disconnected_after_read": 8
+  },
+  "poll_events": {},
+  "configured_loop_timeout": "1",
+  "effective_loop_timeout": 1,
+  "diagnostic_source_sha256": "841db4c87b55280bf9a3d7a95966944180d66dd33d9f4741ea8df65679368598"
+}

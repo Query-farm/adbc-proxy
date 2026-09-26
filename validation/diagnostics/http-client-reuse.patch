@@ -1,0 +1,61 @@
+// Copyright (c) 2026 ADBC Drivers Contributors
+// Copyright (c) 2026 Query Farm LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+--- a/crates/adbc-driver-grainlift/src/lib.rs
++++ b/crates/adbc-driver-grainlift/src/lib.rs
+@@ -814,6 +814,7 @@
+     http: reqwest::blocking::Client,
+     request_timeout: Duration,
+     max_response_bytes: usize,
++    diagnostic_idle_clients: Mutex<Vec<HttpClient>>,
+ }
+ 
+ struct ByteTransport {
+@@ -907,6 +908,7 @@
+                 http,
+                 request_timeout,
+                 max_response_bytes,
++                diagnostic_idle_clients: Mutex::new(Vec::new()),
+             }));
+         }
+         if bearer_token.is_some() {
+@@ -957,12 +959,23 @@
+ 
+     fn call(&self, method: &str, request: &RecordBatch) -> Result<RecordBatch> {
+         match self {
+-            Self::Http(_) => {
+-                let mut client = self.http_client()?;
+-                client
++            Self::Http(http) => {
++                // Diagnostic only: retain one client without holding a mutex
++                // during network I/O, so independent cancellation can proceed.
++                let cached = http.diagnostic_idle_clients.lock().unwrap().pop();
++                let mut client = match cached {
++                    Some(client) => client,
++                    None => self.http_client()?,
++                };
++                let response = client
+                     .call_unary(method, request, None)
+                     .map(|(batch, _)| batch)
+-                    .map_err(rpc_error)
++                    .map_err(rpc_error);
++                let mut idle = http.diagnostic_idle_clients.lock().unwrap();
++                if idle.is_empty() {
++                    idle.push(client);
++                }
++                response
+             }
+             Self::Byte(byte) => byte
+                 .client

@@ -188,6 +188,10 @@ identified HTTP busy polling, corrected a fractional-timeout configuration bug
 in the test hosts, and demonstrated an experimental output-lock workaround.
 The workaround still needs production lifecycle/backpressure validation; the
 native HTTP client's repeated capability discovery also remains to be optimized.
+The [subsequent latency breakdown](../validation/load-results/ec2-python-latency-20260926/README.md)
+shows that client reuse alone does not resolve the loaded throughput ceiling;
+batch RPC count and contention matter substantially. The native reuse patches
+remain diagnostic despite passing the existing Rust workspace checks.
 Multi-minute loopback runs are useful regression evidence;
 they are not hours-long stability tests or capacity planning for a real database
 worker. Separate GC diagnostics found roughly stable tracked-object counts and

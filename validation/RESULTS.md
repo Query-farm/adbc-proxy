@@ -72,6 +72,13 @@ identified busy polling in the HTTP host: our fractional Waitress timeout was
 coerced to zero, and writable sockets were polled while their output lock was
 held. The harness timeout is corrected; the output-lock counterfactual remains
 diagnostic code. See that report for controlled comparisons and failed probes.
+The [latency breakdown](load-results/ec2-python-latency-20260926/README.md)
+then measured about 24 ms/query at one client versus 160–210 ms under eight-client
+load. Most time accumulated during execute, batch-fetch and result-cleanup
+RPCs; value verification took about one millisecond. Larger batches doubled
+throughput in the controlled comparison. Experimental client reuse lowered
+single-client latency but did not consistently remove the loaded throughput
+ceiling. The normal native driver remains unchanged.
 The earlier macOS numbers use different
 hardware, protocol and transport code, so they do not isolate a 0.4 regression.
 No direct-ADBC overhead comparison or controlled before/after typing benchmark

@@ -1,0 +1,146 @@
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Time client execution, Arrow pulls and verification in the diagnostic soak.
+
+Uses the same arguments and host controls as soak.diagnose. Writes parent-only
+aggregate counters to GRAINLIFT_DIAGNOSTIC_OUTPUT plus '.client.json'. No SQL,
+credentials or result values are retained. Verification timing covers the
+consumer body between successive pulls, including ordinary loop overhead.
+"""
+
+from __future__ import annotations
+
+import importlib
+import json
+import os
+import time
+from pathlib import Path
+from types import TracebackType
+from typing import Any, Self
+
+from . import diagnose
+
+
+class _Reader:
+    """Delegate the Arrow reader lifecycle and measure individual pulls."""
+
+    def __init__(self, reader: Any) -> None:
+        """Wrap a reader without consuming or copying any batches.
+
+        Args:
+            reader: Arrow reader owned by the client cursor.
+        """
+        self._reader = reader
+        self._verification: tuple[float, float] | None = None
+
+    def __enter__(self) -> Self:
+        """Enter the underlying reader context.
+
+        Returns:
+            This instrumented reader.
+        """
+        self._reader.__enter__()
+        return self
+
+    def __exit__(
+        self, kind: type[BaseException] | None, value: BaseException | None, traceback: TracebackType | None
+    ) -> Any:
+        """Delegate cleanup and exception handling to the original reader.
+
+        Args:
+            kind: Exception class, if any.
+            value: Exception instance, if any.
+            traceback: Exception traceback, if any.
+
+        Returns:
+            The original context manager's suppression decision.
+        """
+        started, cpu = time.perf_counter(), time.thread_time()
+        try:
+            return self._reader.__exit__(kind, value, traceback)
+        finally:
+            diagnose._record("client.close_reader", started, cpu)
+
+    def __iter__(self) -> Self:
+        """Return this iterator.
+
+        Returns:
+            This instrumented reader.
+        """
+        return self
+
+    def __next__(self) -> Any:
+        """Measure a pull and the consumer work preceding it.
+
+        Returns:
+            The unmodified next Arrow batch.
+        """
+        if self._verification is not None:
+            diagnose._record("client.verify_batch", *self._verification)
+            self._verification = None
+        started, cpu = time.perf_counter(), time.thread_time()
+        outcome = "batch"
+        try:
+            batch = next(self._reader)
+        except StopIteration:
+            outcome = "end"
+            raise
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            diagnose._record(f"client.pull_{outcome}", started, cpu)
+        self._verification = (time.perf_counter(), time.thread_time())
+        return batch
+
+
+def main() -> None:
+    """Run the diagnostic workload with client-side stage counters."""
+    dbapi: Any = importlib.import_module("adbc_driver_manager.dbapi")
+    original_execute = dbapi.Cursor.execute
+    original_fetch = dbapi.Cursor.fetch_record_batch
+
+    def execute(*args: Any, **kwargs: Any) -> Any:
+        started, cpu = time.perf_counter(), time.thread_time()
+        outcome = "success"
+        try:
+            return original_execute(*args, **kwargs)
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            diagnose._record(f"client.execute_{outcome}", started, cpu)
+
+    def fetch(*args: Any, **kwargs: Any) -> _Reader:
+        started, cpu = time.perf_counter(), time.thread_time()
+        try:
+            return _Reader(original_fetch(*args, **kwargs))
+        finally:
+            diagnose._record("client.fetch_reader", started, cpu)
+
+    dbapi.Cursor.execute = execute
+    dbapi.Cursor.fetch_record_batch = fetch
+    try:
+        diagnose.main()
+    finally:
+        dbapi.Cursor.execute = original_execute
+        dbapi.Cursor.fetch_record_batch = original_fetch
+        if output := os.environ.get("GRAINLIFT_DIAGNOSTIC_OUTPUT"):
+            Path(output + ".client.json").write_text(json.dumps(diagnose._metrics, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

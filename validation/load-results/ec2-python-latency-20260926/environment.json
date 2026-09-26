@@ -1,0 +1,16 @@
+{
+  "recorded_utc": "2026-09-26T16:16:43.407381+00:00",
+  "platform": "Linux-6.18.41-94.142.amzn2023.aarch64-aarch64-with-glibc2.34",
+  "python": "3.14.7",
+  "rust": "1.97.1",
+  "native_base_commit": "1bce17804eb19a945f90d6e5a8cb5c5be4723cee",
+  "sdk_commit": "9ca8f3621320bd19c93afe243fbf3f523872c763",
+  "build_command": "cargo +1.97.1 build --release -p adbc-driver-grainlift",
+  "native_binaries": {
+    "native-control.so": "ec4f1df0fbad53d37207a33ae57fea2b969e0b0f4e614cd405f73e6b250423b9",
+    "native-full-reuse.so": "7725e26b16f63270356736509b74f74b7d9e5ec206b305b104c57d8c429085a2",
+    "native-original.so": "f441c8545ec3c43c13d25f026984c4f67c684e5f62a311b833f8cc90fbedbc2b",
+    "native-reuse.so": "97215ba019bcd10bfc57a27325e18f52a7659668f080b045833da23d6dfeb409"
+  },
+  "measured_stream_patch": "07d8d0394ae534dee93dec08c2f2dd96c4242b5ff7bbb0d563800160dd7cb702"
+}

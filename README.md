@@ -427,6 +427,9 @@ open performance gate despite passing correctness and cleanup checks.
 The [follow-up investigation](validation/load-results/ec2-python-investigation-20260926/README.md)
 isolated HTTP busy polling, corrected the test host's timeout configuration,
 and measured a diagnostic workaround for output-lock contention.
+The [latency breakdown](validation/load-results/ec2-python-latency-20260926/README.md)
+separates worker generation, process isolation, HTTP query stages and client
+verification, with controlled batch-size and client-reuse experiments.
 
 ## Repository layout
 

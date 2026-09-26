@@ -1,0 +1,87 @@
+{
+  "metrics": {
+    "wsgi_response_iteration": {
+      "count": 20508.0,
+      "wall_seconds": 133.75629171807122,
+      "thread_cpu_seconds": 19.818176338000104,
+      "max_wall_seconds": 0.47944651400030125
+    },
+    "http_OPTIONS": {
+      "count": 10254.0,
+      "wall_seconds": 1.2938300119021733,
+      "thread_cpu_seconds": 1.2658464770000097,
+      "max_wall_seconds": 0.004299435000575613
+    },
+    "Service._request": {
+      "count": 8.0,
+      "wall_seconds": 0.053811836000022595,
+      "thread_cpu_seconds": 0.009868561999999997,
+      "max_wall_seconds": 0.008699120000528637
+    },
+    "_ProcessConnection._exchange": {
+      "count": 9367.0,
+      "wall_seconds": 26.30471474708247,
+      "thread_cpu_seconds": 2.3049605800000097,
+      "max_wall_seconds": 0.37130735899881984
+    },
+    "Service._response": {
+      "count": 1992.0,
+      "wall_seconds": 12.546120452012474,
+      "thread_cpu_seconds": 1.2242007880000014,
+      "max_wall_seconds": 0.014200554998751613
+    },
+    "Service.open_connection": {
+      "count": 8.0,
+      "wall_seconds": 3.235610188996361,
+      "thread_cpu_seconds": 0.020982259999999996,
+      "max_wall_seconds": 0.4601814710003964
+    },
+    "http_POST": {
+      "count": 10254.0,
+      "wall_seconds": 132.56338647302073,
+      "thread_cpu_seconds": 18.64214570399997,
+      "max_wall_seconds": 0.4794520939994982
+    },
+    "Service.execute": {
+      "count": 980.0,
+      "wall_seconds": 10.133298368997202,
+      "thread_cpu_seconds": 1.0372656949999985,
+      "max_wall_seconds": 0.018136979000701103
+    },
+    "Service.read_result": {
+      "count": 887.0,
+      "wall_seconds": 0.0325777889956953,
+      "thread_cpu_seconds": 0.03204314799999678,
+      "max_wall_seconds": 5.137200059834868e-05
+    },
+    "Service.next_batch": {
+      "count": 7983.0,
+      "wall_seconds": 29.1252806509965,
+      "thread_cpu_seconds": 3.179936119000022,
+      "max_wall_seconds": 0.012367155999527313
+    }
+  },
+  "host_elapsed_seconds": 33.310233186000914,
+  "host_cpu_seconds": 25.35320104,
+  "switch_interval": 0.005,
+  "remaining_children": 0,
+  "worker": "isolated",
+  "http_host": "waitress",
+  "send_bytes_override": null,
+  "readiness_mode": "skip_locked",
+  "readiness_counts": {
+    "calls": 207649,
+    "ready": 16368,
+    "ready_while_output_locked": 16368,
+    "suppressed": 16368
+  },
+  "read_counts": {
+    "calls": 20516,
+    "already_disconnected": 0,
+    "disconnected_after_read": 8
+  },
+  "poll_events": {},
+  "configured_loop_timeout": "1",
+  "effective_loop_timeout": 1,
+  "diagnostic_source_sha256": "841db4c87b55280bf9a3d7a95966944180d66dd33d9f4741ea8df65679368598"
+}

@@ -1,0 +1,17 @@
+{
+  "unadapted": {
+    "status": 200,
+    "headers": [],
+    "body_chunks": 1
+  },
+  "primed": {
+    "status": 401,
+    "headers": [
+      [
+        "Content-Type",
+        "text/plain"
+      ]
+    ],
+    "body_chunks": 1
+  }
+}

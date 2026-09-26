@@ -192,6 +192,13 @@ The [subsequent latency breakdown](../validation/load-results/ec2-python-latency
 shows that client reuse alone does not resolve the loaded throughput ceiling;
 batch RPC count and contention matter substantially. The native reuse patches
 remain diagnostic despite passing the existing Rust workspace checks.
+The [Granian hosting experiment](../validation/load-results/ec2-granian-20260926/README.md)
+improves throughput over both ordinary Waitress and the diagnostic output-lock
+workaround with the same workload. It also exposes a WSGI compatibility issue:
+Granian captures headers before the SDK's lazy response is iterated. A bounded,
+context-preserving adapter is tested in the diagnostic harness. Granian is not
+yet the SDK default; deployment, cancellation, slow-client and active-shutdown
+qualification remain necessary before adopting that host in production.
 Multi-minute loopback runs are useful regression evidence;
 they are not hours-long stability tests or capacity planning for a real database
 worker. Separate GC diagnostics found roughly stable tracked-object counts and

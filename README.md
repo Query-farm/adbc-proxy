@@ -430,6 +430,10 @@ and measured a diagnostic workaround for output-lock contention.
 The [latency breakdown](validation/load-results/ec2-python-latency-20260926/README.md)
 separates worker generation, process isolation, HTTP query stages and client
 verification, with controlled batch-size and client-reuse experiments.
+The [Granian comparison](validation/load-results/ec2-granian-20260926/README.md)
+evaluates an alternative WSGI host with the same native driver and workload.
+It includes a bounded response adapter for Granian's eager header capture;
+the SDK's default host remains unchanged.
 
 ## Repository layout
 

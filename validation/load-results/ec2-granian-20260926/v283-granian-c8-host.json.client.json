@@ -1,0 +1,44 @@
+{
+  "client.execute_error": {
+    "count": 164.0,
+    "wall_seconds": 6.9682698610267835,
+    "thread_cpu_seconds": 0.12975676999999955,
+    "max_wall_seconds": 0.05348570199930691
+  },
+  "client.execute_success": {
+    "count": 1607.0,
+    "wall_seconds": 60.55406820687131,
+    "thread_cpu_seconds": 0.9058548979999991,
+    "max_wall_seconds": 0.08061865099807619
+  },
+  "client.fetch_reader": {
+    "count": 1607.0,
+    "wall_seconds": 0.0368042379450344,
+    "thread_cpu_seconds": 0.037344080000000196,
+    "max_wall_seconds": 7.326299964915961e-05
+  },
+  "client.pull_batch": {
+    "count": 12856.0,
+    "wall_seconds": 128.27792026122916,
+    "thread_cpu_seconds": 2.9196471660000016,
+    "max_wall_seconds": 0.025323838999611326
+  },
+  "client.verify_batch": {
+    "count": 12856.0,
+    "wall_seconds": 1.6410949998498836,
+    "thread_cpu_seconds": 1.649793428000005,
+    "max_wall_seconds": 0.000171125000633765
+  },
+  "client.pull_end": {
+    "count": 1607.0,
+    "wall_seconds": 13.061608015046659,
+    "thread_cpu_seconds": 0.33284666400000107,
+    "max_wall_seconds": 0.014911336998920888
+  },
+  "client.close_reader": {
+    "count": 1607.0,
+    "wall_seconds": 25.983408586947917,
+    "thread_cpu_seconds": 0.3675857979999987,
+    "max_wall_seconds": 0.026746825998998247
+  }
+}

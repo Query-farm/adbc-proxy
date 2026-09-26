@@ -79,6 +79,19 @@ RPCs; value verification took about one millisecond. Larger batches doubled
 throughput in the controlled comparison. Experimental client reuse lowered
 single-client latency but did not consistently remove the loaded throughput
 ceiling. The normal native driver remains unchanged.
+The [Granian hosting comparison](load-results/ec2-granian-20260926/README.md)
+then measured 53.46–53.87 queries/s at eight clients with Granian 2.8.1,
+versus 45.09 for the diagnostic Waitress workaround and 7.79 for ordinary
+Waitress with the corrected timeout. Respective p99 latencies were 183–185,
+215 and 1,453 ms. These runs used the unchanged native driver and SDK,
+4,096 rows in eight 512-row batches, full value checking, and no host method
+profiling. Granian requires a diagnostic adapter for lazy WSGI response
+headers; this is not yet a change to the supported default host. See the
+report for memory, fairness and cleanup. Granian 2.8.3 confirmed 52.97 queries/s
+and 182 ms p99 at eight clients; its 60-second churn check completed 3,151
+queries with zero errors. The initial 2.8.1 three-minute churn run completed
+9,501 queries at 52.74/s, likewise with zero errors and full worker/descriptor
+recovery. RSS grew during both churn checks; a memory plateau is not established.
 The earlier macOS numbers use different
 hardware, protocol and transport code, so they do not isolate a 0.4 regression.
 No direct-ADBC overhead comparison or controlled before/after typing benchmark

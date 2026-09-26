@@ -1,0 +1,472 @@
+{
+  "recorded_utc": "2026-09-26T19:50:23.079511+00:00",
+  "environment": {
+    "platform": "Linux-6.18.41-94.142.amzn2023.aarch64-aarch64-with-glibc2.34",
+    "python": "3.14.7",
+    "driver_sha256": "f441c8545ec3c43c13d25f026984c4f67c684e5f62a311b833f8cc90fbedbc2b",
+    "sdk_source_sha256": {
+      "__init__.py": "241806b5d150a6f0668dd343bd2801071fa298a60de1a3b5d8fddd6713916dae",
+      "api.py": "771f8239f1d042ee3d015fe0c76b119a1799a91f2e669cffced5fddeb08e37d7",
+      "binding.py": "4039670d9395a6e931a3ff62a386b3f7fcc870ca171dcbc06ef37c1c1fd95e0a",
+      "credentials.py": "560f19e9a41d57d7fd28f7f1234db15f73e7f2df58ce21eb36bcc6fb1a53464e",
+      "isolation.py": "7a9e086f12a56053a194b5f14499a1d75664e79a7ac8fef9b3403481057f9335",
+      "options.py": "c3bc6551151987723e898f3911b0c29a5d0f9f0930e8a2bbd46a44e2962d7251",
+      "protocol.py": "566b567826b77c92489c137ca82c34afb44c9cb297f54ce2e0268f241a76866e",
+      "requests.py": "0cd2d6fda2416075d00170197ff53bb02885259757e3ecfda6c4595122bcbce2",
+      "server.py": "a25f7aa1a67f9a2f0c0a619554c661a1509b6517f54b4b0f5a692f5905d3ba04",
+      "telemetry.py": "b1b5e47a6f7765aa0c09ec95648883788430ad374b96facd75177d55582dcc59",
+      "tokens.py": "18588e58cb47b412a15708147902c6520f76fac2aa63e2992b40466859e93441",
+      "wire.py": "2cf7dacd30f7dbb70aa387f32f50765e82a41b2d020e111c30cff0dad04fb233"
+    },
+    "packages": {
+      "grainlift-python": "0.1.0",
+      "vgi-rpc": "0.47.1",
+      "pyarrow": "25.0.1",
+      "adbc-driver-manager": "1.12.0",
+      "waitress": "3.0.2",
+      "psutil": "7.2.2"
+    }
+  },
+  "workload": {
+    "transport": "authenticated loopback HTTP, native ADBC C ABI, Waitress, isolated worker processes",
+    "clients": 8,
+    "requested_seconds": 30,
+    "rows_per_query": 4096,
+    "batch_rows": 512,
+    "payload_bytes_per_row": 64,
+    "queries_per_connection": 10000,
+    "expected_error_every_n_queries_per_connection": 10,
+    "elapsed_seconds": 31.325474176999705
+  },
+  "sampled_server_pid": 3743538,
+  "host_supervisor_pid": 3743538,
+  "queries": 244,
+  "queries_per_second": 7.789187758860922,
+  "rows_per_second": 31904.513060294335,
+  "latency_ms": {
+    "p50": 928.5744422507876,
+    "p95": 1355.2801487774138,
+    "p99": 1453.0438316484674,
+    "maximum": 1529.878761000873,
+    "quantile_method": "fixed logarithmic histogram, upper bucket bound, about 1% resolution"
+  },
+  "clients": [
+    {
+      "queries": 30,
+      "rows": 122880,
+      "connections": 1,
+      "expected_errors": 3,
+      "errors": {},
+      "maximum_gap_seconds": 2.3520678549975855
+    },
+    {
+      "queries": 30,
+      "rows": 122880,
+      "connections": 1,
+      "expected_errors": 3,
+      "errors": {},
+      "maximum_gap_seconds": 2.3457885200004966
+    },
+    {
+      "queries": 31,
+      "rows": 126976,
+      "connections": 1,
+      "expected_errors": 4,
+      "errors": {},
+      "maximum_gap_seconds": 2.2807781789997534
+    },
+    {
+      "queries": 31,
+      "rows": 126976,
+      "connections": 1,
+      "expected_errors": 4,
+      "errors": {},
+      "maximum_gap_seconds": 2.278233208999154
+    },
+    {
+      "queries": 30,
+      "rows": 122880,
+      "connections": 1,
+      "expected_errors": 3,
+      "errors": {},
+      "maximum_gap_seconds": 2.1712755379994633
+    },
+    {
+      "queries": 30,
+      "rows": 122880,
+      "connections": 1,
+      "expected_errors": 3,
+      "errors": {},
+      "maximum_gap_seconds": 2.1704728240001714
+    },
+    {
+      "queries": 31,
+      "rows": 126976,
+      "connections": 1,
+      "expected_errors": 4,
+      "errors": {},
+      "maximum_gap_seconds": 2.3074808370001847
+    },
+    {
+      "queries": 31,
+      "rows": 126976,
+      "connections": 1,
+      "expected_errors": 4,
+      "errors": {},
+      "maximum_gap_seconds": 2.1709647690004203
+    }
+  ],
+  "baseline": {
+    "seconds": 0,
+    "server_rss_bytes": 94158848,
+    "descendant_rss_bytes": 0,
+    "descendants": 0,
+    "server_descriptors": 12,
+    "descendant_descriptors": 0,
+    "unreadable_descendants": 0,
+    "client_rss_bytes": 92553216
+  },
+  "samples": [
+    {
+      "seconds": 0,
+      "server_rss_bytes": 94158848,
+      "descendant_rss_bytes": 0,
+      "descendants": 0,
+      "server_descriptors": 12,
+      "descendant_descriptors": 0,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 92553216
+    },
+    {
+      "seconds": 0.002,
+      "server_rss_bytes": 95084544,
+      "descendant_rss_bytes": 0,
+      "descendants": 0,
+      "server_descriptors": 20,
+      "descendant_descriptors": 0,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 103018496
+    },
+    {
+      "seconds": 1.011,
+      "server_rss_bytes": 109416448,
+      "descendant_rss_bytes": 750809088,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 105447424
+    },
+    {
+      "seconds": 2.021,
+      "server_rss_bytes": 124657664,
+      "descendant_rss_bytes": 766992384,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 108142592
+    },
+    {
+      "seconds": 3.032,
+      "server_rss_bytes": 127647744,
+      "descendant_rss_bytes": 767004672,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 108740608
+    },
+    {
+      "seconds": 4.042,
+      "server_rss_bytes": 128020480,
+      "descendant_rss_bytes": 767021056,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 108888064
+    },
+    {
+      "seconds": 5.052,
+      "server_rss_bytes": 128462848,
+      "descendant_rss_bytes": 767025152,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 108949504
+    },
+    {
+      "seconds": 6.063,
+      "server_rss_bytes": 128712704,
+      "descendant_rss_bytes": 767029248,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109002752
+    },
+    {
+      "seconds": 7.073,
+      "server_rss_bytes": 128991232,
+      "descendant_rss_bytes": 767029248,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109072384
+    },
+    {
+      "seconds": 8.083,
+      "server_rss_bytes": 129056768,
+      "descendant_rss_bytes": 767029248,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109125632
+    },
+    {
+      "seconds": 9.094,
+      "server_rss_bytes": 129097728,
+      "descendant_rss_bytes": 767029248,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109166592
+    },
+    {
+      "seconds": 10.104,
+      "server_rss_bytes": 129196032,
+      "descendant_rss_bytes": 767033344,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109207552
+    },
+    {
+      "seconds": 11.114,
+      "server_rss_bytes": 129589248,
+      "descendant_rss_bytes": 767070208,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109305856
+    },
+    {
+      "seconds": 12.124,
+      "server_rss_bytes": 129667072,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109375488
+    },
+    {
+      "seconds": 13.134,
+      "server_rss_bytes": 129691648,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109375488
+    },
+    {
+      "seconds": 14.144,
+      "server_rss_bytes": 129818624,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109383680
+    },
+    {
+      "seconds": 15.155,
+      "server_rss_bytes": 129892352,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109387776
+    },
+    {
+      "seconds": 16.167,
+      "server_rss_bytes": 129929216,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109420544
+    },
+    {
+      "seconds": 17.177,
+      "server_rss_bytes": 129953792,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109424640
+    },
+    {
+      "seconds": 18.187,
+      "server_rss_bytes": 129957888,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109449216
+    },
+    {
+      "seconds": 19.198,
+      "server_rss_bytes": 129970176,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109473792
+    },
+    {
+      "seconds": 20.207,
+      "server_rss_bytes": 130019328,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109514752
+    },
+    {
+      "seconds": 21.218,
+      "server_rss_bytes": 130154496,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109527040
+    },
+    {
+      "seconds": 22.23,
+      "server_rss_bytes": 130326528,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109531136
+    },
+    {
+      "seconds": 23.24,
+      "server_rss_bytes": 130375680,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109531136
+    },
+    {
+      "seconds": 24.251,
+      "server_rss_bytes": 130404352,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109531136
+    },
+    {
+      "seconds": 25.262,
+      "server_rss_bytes": 130428928,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109539328
+    },
+    {
+      "seconds": 26.272,
+      "server_rss_bytes": 130457600,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109539328
+    },
+    {
+      "seconds": 27.283,
+      "server_rss_bytes": 130498560,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109539328
+    },
+    {
+      "seconds": 28.293,
+      "server_rss_bytes": 130510848,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109539328
+    },
+    {
+      "seconds": 29.304,
+      "server_rss_bytes": 130531328,
+      "descendant_rss_bytes": 767078400,
+      "descendants": 8,
+      "server_descriptors": 52,
+      "descendant_descriptors": 72,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109543424
+    },
+    {
+      "seconds": 30.314,
+      "server_rss_bytes": 130592768,
+      "descendant_rss_bytes": 671109120,
+      "descendants": 7,
+      "server_descriptors": 47,
+      "descendant_descriptors": 63,
+      "unreadable_descendants": 0,
+      "client_rss_bytes": 109584384
+    }
+  ],
+  "recovery": {
+    "seconds": 43.326,
+    "server_rss_bytes": 130592768,
+    "descendant_rss_bytes": 0,
+    "descendants": 0,
+    "server_descriptors": 12,
+    "descendant_descriptors": 0,
+    "unreadable_descendants": 0,
+    "client_rss_bytes": 108335104
+  },
+  "peak_server_rss_bytes": 130592768,
+  "peak_descendant_rss_bytes": 767078400,
+  "unexpected_errors": 0,
+  "fairness_jain_index": 0.9997313272434175,
+  "peak_client_rss_bytes": 109584384,
+  "incomplete_descendant_samples": 0,
+  "steady_server_rss_growth_bytes": 1396736,
+  "steady_client_rss_growth_bytes": 376832,
+  "sdk_sources_unchanged": true,
+  "host_exit_code": 0,
+  "passed": true
+}

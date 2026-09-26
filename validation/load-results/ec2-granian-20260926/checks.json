@@ -1,0 +1,22 @@
+{
+  "execution_host": "ec2-user@54.210.7.36",
+  "granian": "2.8.3",
+  "pytest": "19 passed; tests/test_granian.py tests/test_soak.py tests/test_latency.py",
+  "passed": [
+    "Ruff check",
+    "Ruff format --check",
+    "strict mypy",
+    "isolated pydoclint",
+    "bash -n validation/run_external.sh validation/diagnostics/run_granian.sh",
+    "ShellCheck validation/run_external.sh validation/diagnostics/run_granian.sh",
+    "python -m py_compile validation/*.py examples/*.py"
+  ],
+  "python_files": [
+    "soak/granian_host.py",
+    "soak/wsgi_compat.py",
+    "soak/diagnose.py",
+    "soak/runner.py",
+    "tests/test_granian.py"
+  ],
+  "native_sources_unchanged": true
+}

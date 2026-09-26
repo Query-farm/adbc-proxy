@@ -1,0 +1,30 @@
+{
+  "platform": "Linux-6.18.41-94.142.amzn2023.aarch64-aarch64-with-glibc2.34",
+  "python": "3.14.7 (main, Sep  1 2026, 14:16:03) [Clang 22.1.3 ]",
+  "local_source_base": "b3f6b06b3a4e15adb18a9b5a3eae1812cc5bbe59",
+  "remote_head": "1bce17804eb19a945f90d6e5a8cb5c5be4723cee",
+  "sdk_head": "9ca8f3621320bd19c93afe243fbf3f523872c763",
+  "driver_sha256": "f441c8545ec3c43c13d25f026984c4f67c684e5f62a311b833f8cc90fbedbc2b",
+  "sources": {
+    "validation/regression/soak/runner.py": "03998140914f3126717a3a9889668e3ac4263e888a584c16532cc719f602eac5",
+    "validation/regression/soak/diagnose.py": "bfbc54ff212241cd6a211c67944089d4c57989e20d832c2c707d08e3c492ccf9",
+    "validation/regression/soak/latency.py": "96f5c82e6ae0e077d8b2d6bd4a5938624203c799c41dfacb2b734d83bcf28183",
+    "validation/regression/soak/granian_host.py": "cf1dbcf2cb5dc40d31a9f53b220a15d98d8a269d1da7d4897217e4d3d7b034d3",
+    "validation/regression/soak/wsgi_compat.py": "f90a54d97e413930f47584179400d8f77ddbfa17e11c170b92ab9d694b4ef9be",
+    "validation/diagnostics/run_granian.sh": "81cff87771f0833f42e7b9788fa742f99b8b2cdbcc0d9ce7160c2e14f54c4c73"
+  },
+  "packages": {
+    "granian": "2.8.1",
+    "waitress": "3.0.2",
+    "grainlift-python": "0.1.0",
+    "vgi-rpc": "0.47.1",
+    "pyarrow": "25.0.1",
+    "adbc-driver-manager": "1.12.0",
+    "psutil": "7.2.2"
+  },
+  "notes": [
+    "One Granian serving process plus supervisor; samples exclude supervisor; shutdown RSS recorded separately.",
+    "Other user-owned DuckDB unit tests were observed on the shared EC2 host; they were not stopped.",
+    "No task builds, profilers or measured cases overlapped."
+  ]
+}

@@ -310,9 +310,12 @@ def main() -> None:
     try:
         if not parent.poll(30):
             raise RuntimeError("Load host failed to start")
-        endpoint = cast(str, parent.recv())
+        ready = parent.recv()
+        endpoint = cast(str, ready["endpoint"] if isinstance(ready, dict) else ready)
         assert host.pid is not None
-        process = psutil.Process(host.pid)
+        # A diagnostic host may have a supervisor outside the serving process.
+        # Its trusted local readiness message identifies the process to sample.
+        process = psutil.Process(ready["sample_pid"] if isinstance(ready, dict) else host.pid)
         baseline = _sample(process, 0)
         samples: list[dict[str, int | float]] = [baseline]
         started = time.monotonic()
@@ -352,7 +355,11 @@ def main() -> None:
                 },
             },
             "workload": {
-                "transport": "authenticated loopback HTTP, native ADBC C ABI, Waitress, isolated worker processes",
+                "transport": (
+                    ready["transport"]
+                    if isinstance(ready, dict)
+                    else "authenticated loopback HTTP, native ADBC C ABI, Waitress, isolated worker processes"
+                ),
                 "clients": args.clients,
                 "requested_seconds": args.seconds,
                 "rows_per_query": args.rows,
@@ -362,6 +369,8 @@ def main() -> None:
                 "expected_error_every_n_queries_per_connection": 10,
                 "elapsed_seconds": elapsed,
             },
+            "sampled_server_pid": process.pid,
+            "host_supervisor_pid": host.pid,
             "queries": combined.count,
             "queries_per_second": combined.count / elapsed,
             "rows_per_second": sum(outcome.rows for outcome in outcomes) / elapsed,

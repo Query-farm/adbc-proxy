@@ -70,3 +70,46 @@ It uses ten warmup queries, bounded batch sizes, a bounded iteration count,
 normal statement/result cleanup and full value verification. It excludes
 connection startup and service-level authentication/quotas, so it is a lower
 layer comparison rather than an end-to-end service benchmark.
+
+## Granian hosting comparison
+
+Install the optional, pinned host into the existing regression environment:
+
+```console
+cd validation/regression
+uv pip install --python .venv/bin/python -r ../diagnostics/requirements-granian.txt
+.venv/bin/pytest -q tests/test_granian.py tests/test_soak.py tests/test_latency.py
+cd ../..
+bash validation/diagnostics/run_granian.sh /absolute/grainlift /absolute/evidence /absolute/unchanged-driver.so
+```
+
+Run heavy workloads on the designated EC2 host. The script runs cases serially,
+using the unchanged native driver and SDK: 4,096 rows, eight 512-row batches,
+64-byte values, isolated backends, authenticated HTTP and full value checking.
+It compares ordinary Waitress with its corrected timeout, the diagnostic
+Waitress output-lock workaround, and Granian. It disables host method timers
+and profilers for all cases, retaining client stage measurements. The final
+Granian run lasts 180 seconds and reconnects every 25 successful queries.
+The optional fourth argument `current` runs just Granian at one and eight
+clients, followed by a 60-second churn check, for patch-release verification.
+
+Granian uses its ordinary public server API with one serving process and a
+supervisor, HTTP/1, one Rust runtime thread, the same Python thread ceiling
+as Waitress, and bounded admission backpressure. Resource samples cover the
+serving process and isolated backend children; the supervisor's RSS is reported
+separately at shutdown. They are not total deployment peak memory measurements.
+The local control pipe reports the serving PID before the baseline sample.
+Neither authentication nor SDK message/batch limits is disabled. This is a
+loopback comparison, not an Internet-facing deployment or complete HTTP
+slow-client/backpressure/cancellation qualification.
+
+Granian 2.8.1 and 2.8.3's WSGI wrappers capture headers before iterating a returned
+generator. Grainlift's privacy wrapper is lazy, so using it directly loses
+status/headers and fails native capability discovery. The diagnostic
+`soak.wsgi_compat` adapter advances one response chunk before returning to
+Granian. It retains at most that existing, SDK-bounded chunk; it does not collect
+the query result. A dedicated copied context follows iteration and cleanup
+across host threads, preserving request-scoped logging privacy. Tests cover
+headers, bytes, bounded prefetch, early close, first-chunk failure and context
+cleanup, plus real HTTP authentication and request-size boundaries. This is a
+compatibility experiment, not a change to the default SDK host or upstream VGI.

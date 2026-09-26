@@ -1,0 +1,27 @@
+{
+  "metrics": {},
+  "host_timings": false,
+  "host_elapsed_seconds": 44.407716402001824,
+  "host_cpu_seconds": 38.306354212,
+  "switch_interval": 0.005,
+  "remaining_children": 0,
+  "worker": "isolated",
+  "http_host": "waitress",
+  "send_bytes_override": null,
+  "readiness_mode": null,
+  "readiness_counts": {
+    "calls": 0,
+    "ready": 0,
+    "ready_while_output_locked": 0,
+    "suppressed": 0
+  },
+  "read_counts": {
+    "calls": 0,
+    "already_disconnected": 0,
+    "disconnected_after_read": 0
+  },
+  "poll_events": {},
+  "configured_loop_timeout": "1",
+  "effective_loop_timeout": 1,
+  "diagnostic_source_sha256": "bfbc54ff212241cd6a211c67944089d4c57989e20d832c2c707d08e3c492ccf9"
+}

@@ -17,7 +17,7 @@
 
 Use GRAINLIFT_DIAGNOSTIC_OUTPUT for aggregate stage timings. Optional variables
 GRAINLIFT_DIAGNOSTIC_WORKER (direct/isolated), GRAINLIFT_DIAGNOSTIC_HTTP
-(waitress/wsgiref), GRAINLIFT_DIAGNOSTIC_SWITCH_INTERVAL and
+(waitress/wsgiref/granian), GRAINLIFT_DIAGNOSTIC_SWITCH_INTERVAL and
 GRAINLIFT_DIAGNOSTIC_SEND_BYTES alter only this disposable host. Wsgiref is a
 diagnostic comparison, not a production server recommendation. Timings overlap
 across nested calls and threads and must not be added as exclusive CPU costs.
@@ -173,11 +173,18 @@ class _ThreadedServer(ThreadingMixIn, WSGIServer):
 
 
 def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, payload: int) -> None:
+    if os.environ.get("GRAINLIFT_DIAGNOSTIC_HTTP") == "granian":
+        from .granian_host import serve
+
+        serve(control, token, clients, rows, batch_rows, payload)
+        return
     if interval := os.environ.get("GRAINLIFT_DIAGNOSTIC_SWITCH_INTERVAL"):
         sys.setswitchinterval(float(interval))
-    for name in ("open_connection", "execute", "read_result", "next_batch", "_response", "_request"):
-        _time_method(Service, name)
-    _time_method(_ProcessConnection, "_exchange")
+    timings = os.environ.get("GRAINLIFT_DIAGNOSTIC_TIMINGS", "on") == "on"
+    if timings:
+        for name in ("open_connection", "execute", "read_result", "next_batch", "_response", "_request"):
+            _time_method(Service, name)
+        _time_method(_ProcessConnection, "_exchange")
     worker = (
         LoadWorker(rows, batch_rows, payload)
         if os.environ.get("GRAINLIFT_DIAGNOSTIC_WORKER", "isolated") == "direct"
@@ -193,8 +200,9 @@ def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, 
     effective_loop_timeout: int | None = None
     with Service(worker, limits=Limits(sessions=clients + 2, idle_seconds=10)) as service:
         app = _TimedApplication(service.app(tokens={token: "load-principal"}))
+        hosted_app = app if timings else service.app(tokens={token: "load-principal"})
         if os.environ.get("GRAINLIFT_DIAGNOSTIC_HTTP", "waitress") == "wsgiref":
-            simple = make_server("127.0.0.1", 0, app, server_class=_ThreadedServer, handler_class=_QuietHandler)
+            simple = make_server("127.0.0.1", 0, hosted_app, server_class=_ThreadedServer, handler_class=_QuietHandler)
             run: Callable[[], None] = simple.serve_forever
             port = simple.server_port
 
@@ -239,7 +247,7 @@ def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, 
             if send_bytes := os.environ.get("GRAINLIFT_DIAGNOSTIC_SEND_BYTES"):
                 overrides["send_bytes"] = int(send_bytes)
             server = waitress.create_server(
-                app,
+                hosted_app,
                 host="127.0.0.1",
                 port=0,
                 threads=max(8, clients * 2),
@@ -290,6 +298,7 @@ def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, 
                 raise RuntimeError("Diagnostic host did not stop")
     report = {
         "metrics": _metrics,
+        "host_timings": timings,
         "host_elapsed_seconds": time.perf_counter() - started,
         "host_cpu_seconds": time.process_time() - cpu_started,
         "switch_interval": sys.getswitchinterval(),
@@ -335,15 +344,19 @@ def main() -> None:
         raise SystemExit("Set GRAINLIFT_DIAGNOSTIC_OUTPUT")
     choices = {
         "GRAINLIFT_DIAGNOSTIC_WORKER": {"direct", "isolated"},
-        "GRAINLIFT_DIAGNOSTIC_HTTP": {"waitress", "wsgiref"},
+        "GRAINLIFT_DIAGNOSTIC_HTTP": {"waitress", "wsgiref", "granian"},
+        "GRAINLIFT_DIAGNOSTIC_TIMINGS": {"on", "off"},
         "GRAINLIFT_DIAGNOSTIC_READINESS": {"observe", "skip_locked"},
         "GRAINLIFT_DIAGNOSTIC_PROFILE_CLOCK": {"wall", "thread_cpu"},
     }
     for name, allowed in choices.items():
         if name in os.environ and os.environ[name] not in allowed:
             raise SystemExit(f"Unsupported {name}")
-    if os.environ.get("GRAINLIFT_DIAGNOSTIC_CPU_PROFILE") and os.environ.get("GRAINLIFT_DIAGNOSTIC_HTTP") == "wsgiref":
-        raise SystemExit("CPU profiling requires the bounded Waitress thread pool")
+    if os.environ.get("GRAINLIFT_DIAGNOSTIC_CPU_PROFILE") and (
+        os.environ.get("GRAINLIFT_DIAGNOSTIC_HTTP", "waitress") != "waitress"
+        or os.environ.get("GRAINLIFT_DIAGNOSTIC_TIMINGS", "on") != "on"
+    ):
+        raise SystemExit("CPU profiling requires the instrumented Waitress thread pool")
     runner._host = _host
     runner.main()
 

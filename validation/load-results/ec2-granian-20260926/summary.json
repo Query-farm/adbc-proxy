@@ -1,0 +1,86 @@
+{
+  "verified_queries": 22888,
+  "unexpected_errors": 0,
+  "measured_cases": [
+    {
+      "artifact": "v281-granian-c1.json",
+      "queries": 1317,
+      "queries_per_second": 43.44452207832055,
+      "p99_ms": 26.877691778478344,
+      "peak_serving_mib": 107.1328125,
+      "peak_backend_mib": 91.4296875
+    },
+    {
+      "artifact": "v281-granian-c8.json",
+      "queries": 1622,
+      "queries_per_second": 53.46376258979573,
+      "p99_ms": 183.41333150089346,
+      "peak_serving_mib": 136.25,
+      "peak_backend_mib": 731.29296875
+    },
+    {
+      "artifact": "v281-granian-churn-c8.json",
+      "queries": 9501,
+      "queries_per_second": 52.74377968115334,
+      "p99_ms": 179.79934457493727,
+      "peak_serving_mib": 139.87890625,
+      "peak_backend_mib": 731.8671875
+    },
+    {
+      "artifact": "v281-granian-repeat-c8.json",
+      "queries": 1634,
+      "queries_per_second": 53.86975861703866,
+      "p99_ms": 185.2474748159025,
+      "peak_serving_mib": 140.4140625,
+      "peak_backend_mib": 731.20703125
+    },
+    {
+      "artifact": "v281-waitress-c1.json",
+      "queries": 1131,
+      "queries_per_second": 37.303403293512716,
+      "p99_ms": 31.516379982929898,
+      "peak_serving_mib": 104.86328125,
+      "peak_backend_mib": 91.4453125
+    },
+    {
+      "artifact": "v281-waitress-c8.json",
+      "queries": 244,
+      "queries_per_second": 7.789187758860922,
+      "p99_ms": 1453.0438316484674,
+      "peak_serving_mib": 124.54296875,
+      "peak_backend_mib": 731.54296875
+    },
+    {
+      "artifact": "v281-waitress-patched-c8.json",
+      "queries": 1368,
+      "queries_per_second": 45.09282726651869,
+      "p99_ms": 215.06672829090374,
+      "peak_serving_mib": 127.671875,
+      "peak_backend_mib": 730.91015625
+    },
+    {
+      "artifact": "v283-granian-c1.json",
+      "queries": 1313,
+      "queries_per_second": 43.339387845810805,
+      "p99_ms": 27.146478696263095,
+      "peak_serving_mib": 107.171875,
+      "peak_backend_mib": 91.42578125
+    },
+    {
+      "artifact": "v283-granian-c8.json",
+      "queries": 1607,
+      "queries_per_second": 52.971660999515926,
+      "p99_ms": 181.59734802068678,
+      "peak_serving_mib": 144.0,
+      "peak_backend_mib": 731.33203125
+    },
+    {
+      "artifact": "v283-granian-churn-c8.json",
+      "queries": 3151,
+      "queries_per_second": 51.924604185554585,
+      "p99_ms": 179.79934457493727,
+      "peak_serving_mib": 147.7265625,
+      "peak_backend_mib": 732.0234375
+    }
+  ]
+}

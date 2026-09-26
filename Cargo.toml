@@ -39,7 +39,7 @@ arrow-buffer = "59"
 arrow-ipc = "59"
 arrow-schema = "59"
 axum = "0.7"
-base64 = "0.22"
+base64 = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
 opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }

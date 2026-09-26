@@ -1485,7 +1485,7 @@ dependencies = [
  "arrow-data",
  "arrow-ipc",
  "arrow-schema",
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

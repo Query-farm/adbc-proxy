@@ -15,8 +15,11 @@
 
 """Check load evidence calculations and synthetic workload resource boundaries."""
 
+import importlib
 import multiprocessing
 import threading
+from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import psutil
@@ -24,6 +27,53 @@ import pytest
 
 from soak.runner import Histogram, _host, _sample
 from soak.worker import LoadWorker
+
+
+@pytest.mark.parametrize("host_kind", ["soak", "tls_edge"])
+def test_hosts_keep_waitress_poll_timeout_positive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, host_kind: str
+) -> None:
+    """Check real Waitress coercion and shutdown for both configured test hosts."""
+    waitress = importlib.import_module("waitress.server")
+    create_server = waitress.create_server
+    parsed_timeouts: list[int] = []
+
+    def capture_server(*args: Any, **kwargs: Any) -> Any:
+        server = create_server(*args, **kwargs)
+        parsed_timeouts.append(server.adj.asyncore_loop_timeout)
+        return server
+
+    monkeypatch.setattr(waitress, "create_server", capture_server)
+    parent, child = multiprocessing.Pipe()
+    failures: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            if host_kind == "soak":
+                _host(child, "test-token", 1, 1, 1, 1)
+            else:
+                from deployment.tls_edge import _host as edge_host
+
+                edge_host(child, str(tmp_path), "test-token")
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    try:
+        assert parent.poll(5), failures
+        parent.recv()
+        parent.send("stop")
+        assert parent.poll(5), failures
+        parent.recv()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert not failures
+        assert len(parsed_timeouts) == 1
+        assert parsed_timeouts[0] >= 1
+    finally:
+        parent.close()
+        thread.join(5)
 
 
 def test_histogram_accounts_for_every_query() -> None:

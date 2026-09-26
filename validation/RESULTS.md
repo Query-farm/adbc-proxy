@@ -66,8 +66,13 @@ The retained failure record and sampler fix are explicit, and the successful
 retry reports zero incomplete child samples. Eleven focused tests and Python
 quality checks passed on EC2 before the retry.
 
-**Python-worker performance remains an open gate.** Low throughput and
-multi-second tails need investigation. The earlier macOS numbers use different
+**Python-worker performance remains an open gate.** The subsequent
+[EC2 investigation](load-results/ec2-python-investigation-20260926/README.md)
+identified busy polling in the HTTP host: our fractional Waitress timeout was
+coerced to zero, and writable sockets were polled while their output lock was
+held. The harness timeout is corrected; the output-lock counterfactual remains
+diagnostic code. See that report for controlled comparisons and failed probes.
+The earlier macOS numbers use different
 hardware, protocol and transport code, so they do not isolate a 0.4 regression.
 No direct-ADBC overhead comparison or controlled before/after typing benchmark
 was performed here.
@@ -82,7 +87,7 @@ A broad 49 Hz CPU profile fell behind and recorded six workload errors; it is
 retained as a failed diagnostic. The lighter 9 Hz host-only profile's workload
 passed, but sampling lag and 68 failed stack reads limit precision. Captured
 stacks repeatedly include Arrow IPC, VGI serialization and Waitress HTTP paths;
-they are investigation leads, not a demonstrated root cause. Both Speedscope
+those profiles alone did not establish a root cause. Both Speedscope
 profiles and the allocation records are included in the linked evidence.
 
 ## Python-worker load and TLS edge — 2026-09-25

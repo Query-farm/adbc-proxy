@@ -231,7 +231,8 @@ def _host(control: Pipe, directory: str, token: str) -> None:
             # inclusive quota. One byte of host headroom keeps the same limit.
             max_request_body_size=REQUEST_LIMIT + 1,
             channel_timeout=5,
-            asyncore_loop_timeout=0.1,
+            # Waitress coerces this to int: a fractional value becomes a busy poll.
+            asyncore_loop_timeout=1,
         )
         listener = threading.Thread(target=server.run)
         listener.start()

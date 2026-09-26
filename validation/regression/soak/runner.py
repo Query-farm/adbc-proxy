@@ -151,7 +151,8 @@ def _serve(control: Pipe, token: str, clients: int, rows: int, batch_rows: int, 
             # Waitress rejects >= while the SDK's decoded-body limit is inclusive.
             max_request_body_size=2 * 1024 * 1024 + 1,
             channel_timeout=10,
-            asyncore_loop_timeout=0.1,
+            # Waitress coerces this to int: a fractional value becomes a busy poll.
+            asyncore_loop_timeout=1,
             inbuf_overflow=1024 * 1024,
             outbuf_overflow=1024 * 1024,
         )

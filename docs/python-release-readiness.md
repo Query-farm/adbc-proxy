@@ -74,7 +74,7 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 | Credential rotation | Atomic replacement, overlap/revocation, principal ownership and signed continuations | Passed locally |
 | Reproducible packaging | Exact hashed wheels and dependency closure; both local wheels rebuild byte-for-byte from sdists; stock registry VGI-RPC; forbidden payload checks | Passed locally |
 | Fresh installation | Candidate v6: 609 tests without failures or skips on each of Python 3.13.12 and 3.14.7, with installed-package imports verified | Passed locally on macOS arm64 |
-| Load and cleanup | Protocol 0.4 EC2 Python-worker runs: 4.24/2.30 queries/s at eight clients; multi-second tails, no unexpected errors or remaining workers in completed baselines | Performance investigation and memory/long-duration gates remain open |
+| Load and cleanup | Protocol 0.4 EC2 baselines: 4.24/2.30 queries/s; follow-up HTTP polling counterfactual: 43.13 queries/s, p99 215 ms, zero errors and clean shutdown | Supported HTTP-host fix and memory/long-duration gates remain open |
 | TLS edge | Real Caddy/Waitress HTTPS, certificate/hostname failures, verified Python RPC, authentication, limits, logs and draining | Passed locally; native HTTPS success remains unverified |
 | Runtime CI | SDK, hello-world and combined candidate v6 matrices passed Linux/macOS × Python 3.13/3.14 | Passed remotely |
 | Publication | Matching public source revisions and candidate v6 prerelease published; package-index releases remain separate | PyPI release versions/dependency floors pending |
@@ -182,7 +182,12 @@ cleanup observations. The [protocol 0.4 EC2 rerun](../validation/load-results/ec
 passed native load and completed Python-worker correctness/cleanup checks, but
 found low Python throughput and multi-second tails. A harness sampling failure
 was fixed and retried; both attempts are retained. CPU profiles had observer
-effects and sampling limitations, so no precise root cause is claimed.
+effects and sampling limitations. A subsequent
+[controlled investigation](../validation/load-results/ec2-python-investigation-20260926/README.md)
+identified HTTP busy polling, corrected a fractional-timeout configuration bug
+in the test hosts, and demonstrated an experimental output-lock workaround.
+The workaround still needs production lifecycle/backpressure validation; the
+native HTTP client's repeated capability discovery also remains to be optimized.
 Multi-minute loopback runs are useful regression evidence;
 they are not hours-long stability tests or capacity planning for a real database
 worker. Separate GC diagnostics found roughly stable tracked-object counts and

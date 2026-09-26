@@ -424,6 +424,9 @@ The [protocol 0.4 EC2 benchmarks](validation/load-results/ec2-v04-20260926/READM
 include remote load and memory/CPU profiles. Native load passed, while the
 Python-worker path showed low throughput and multi-second tails that remain an
 open performance gate despite passing correctness and cleanup checks.
+The [follow-up investigation](validation/load-results/ec2-python-investigation-20260926/README.md)
+isolated HTTP busy polling, corrected the test host's timeout configuration,
+and measured a diagnostic workaround for output-lock contention.
 
 ## Repository layout
 

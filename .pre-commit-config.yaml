@@ -47,13 +47,13 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
-        # JUnit evidence is preserved byte-for-byte from the reviewed candidate.
-        exclude: ^validation/release-results/candidate-[^/]+/.*\.xml$
+        # Preserve original JUnit and profiler payloads byte-for-byte.
+        exclude: ^validation/(release-results/candidate-[^/]+/.*\.xml|load-results/[^/]+/.*\.speedscope\.json)$
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: trailing-whitespace
-        # Unified-diff context lines require their leading space, even if empty.
-        exclude: ^validation/hardening/grainlift-python\.patch$
+        # Preserve unified-diff context and generated JUnit failure text.
+        exclude: ^validation/(hardening/grainlift-python\.patch|release-results/candidate-[^/]+/.*\.xml)$
 
   - repo: https://github.com/adbc-drivers/dev
     rev: ffdbb1a1237b89cafb15a7420667f54838986681

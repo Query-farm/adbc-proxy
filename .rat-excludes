@@ -20,6 +20,10 @@ pixi.lock
 validation/uv.lock
 .github/assets/*.svg
 validation/load-results/*.json
+# Machine-generated benchmark manifests, package inventories and checksums.
+validation/load-results/ec2-v04-20260926/*.txt
+validation/load-results/ec2-v04-20260926/*.tsv
+validation/load-results/ec2-v04-20260926/SHA256SUMS
 validation/regression/uv.lock
 validation/hardening/grainlift-python.patch
 validation/hardening/manifest.json

@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-25",
+  "source": "../grainlift-python",
+  "staged": "target/grainlift-hardening/grainlift-python",
+  "files": {
+    "README.md": {
+      "before_sha256": "c61c352dd360b5d82180caa1b55250c0fc97a0e307eaff7a82b8589325d78375",
+      "after_sha256": "5bbf38136e6d987f5413045328a3ba411db489888f9bd8d15b8d76312249c102"
+    },
+    "src/grainlift/__init__.py": {
+      "before_sha256": "61c054bcd694f398d21722942a2e429617ab91f5394a5cb77a6ae6a2a187a8ff",
+      "after_sha256": "ddbbca85b84af91e4aa254d45481d660892e04f3b9a490b8cb7f347c453e7a0f"
+    },
+    "src/grainlift/api.py": {
+      "before_sha256": "ec40577b269b146107ed94d3dae1d9df7ed6001d88ab622d39f2776c65cddec7",
+      "after_sha256": "f5c8c4efe3456c627b32d07822464d9cdb282104b2db840215fcffef80ab0532"
+    },
+    "src/grainlift/server.py": {
+      "before_sha256": "adf073b38d272f65016bb7e911e4e27655ae2411fa470318a6a3597b7e757216",
+      "after_sha256": "ae3372906df7c0c10cd3165752ab01cf1b74b1ff4b7a957a52911ac14aa2b092"
+    },
+    "src/grainlift/isolation.py": {
+      "before_sha256": null,
+      "after_sha256": "d4d21625825dc510e4978c65312a9ba2aceba466716c97403fca6a9731894481"
+    },
+    "src/grainlift/telemetry.py": {
+      "before_sha256": null,
+      "after_sha256": "12cde789faf9887dbe2be61409a7352a08693d9e7ae120f09a30ef4d8f956442"
+    },
+    "tests/test_hardening.py": {
+      "before_sha256": null,
+      "after_sha256": "f02b19204bfaca82fae195d4da718b1add3ac5fed3c221eb9dd92087b165eca8"
+    },
+    "tests/test_isolation.py": {
+      "before_sha256": null,
+      "after_sha256": "462428c9cd9fb0f81650f83ed0c32ea611157ca2de284437ba886b74fb151b7d"
+    },
+    "tests/test_http.py": {
+      "before_sha256": "d2ba25d1dd977628d05d4eab2052b720d1044d82e873d437eceaeee48d27a03a",
+      "after_sha256": "d9140203488f2aa058d7eae0c80c6f7ecc76d04a9ac23255a83f411d047a78f7"
+    }
+  },
+  "patch_sha256": "6eb3a857429e9cd539eaa95d38dc9f6aa232a66421bd1b5cdd12998b98e1c3a5"
+}

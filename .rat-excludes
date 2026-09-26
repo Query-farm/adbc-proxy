@@ -20,3 +20,12 @@ pixi.lock
 validation/uv.lock
 .github/assets/*.svg
 validation/load-results/*.json
+validation/regression/uv.lock
+validation/hardening/grainlift-python.patch
+validation/hardening/manifest.json
+# Immutable generated release evidence; preserve recorded hashes and payloads.
+validation/release-results/candidate-*/*.json
+validation/release-results/candidate-*/*.xml
+validation/release-results/candidate-*/*.txt
+validation/release-results/candidate-*/SHA256SUMS
+validation/release-results/candidate-*/README.md

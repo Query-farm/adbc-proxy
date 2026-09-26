@@ -17,6 +17,16 @@
 
 # External ADBC validation
 
+For deterministic native-client regressions without a downstream database, see
+the [toolkit-backed suite](regression/README.md):
+
+```sh
+./validation/run_regression.sh
+```
+
+It uses the Python toolkit as an independent HTTP server and applies the Ruff,
+strict mypy, and isolated pydoclint standards used by vgi-python.
+
 This directory validates the complete deployed path rather than instantiating
 the Rust proxy types in-process:
 
@@ -173,6 +183,11 @@ See [`RESULTS.md`](RESULTS.md) for the exact environment, commands, pass/skip
 counts, and remaining conformance gaps from the latest run.
 
 ## Scope
+
+The Python toolkit has a separate [wheel release gate](RELEASE.md): exact
+VGI-RPC/toolkit/example artifacts, hash-locked installation into fresh
+environments, native tests without sibling source imports, and a configurable
+Python 3.13/3.14 Linux/macOS runtime matrix.
 
 The smoke tests cover C-ABI dynamic loading, proxy/database initialization,
 authentication, target selection, downstream dynamic loading, DDL and DML row

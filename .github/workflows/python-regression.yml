@@ -1,0 +1,132 @@
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: Python regression and release candidate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_url:
+        description: HTTPS URL of the reviewed Python candidate archive
+        required: true
+        type: string
+      candidate_sha256:
+        description: SHA-256 from the candidate SHA256SUMS file
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: 0.11.7
+      - run: uv python install 3.13
+      - name: Ruff lint
+        run: >-
+          uvx --from ruff==0.16.2 ruff check --config validation/regression/pyproject.toml
+          validation/regression validation/release_bundle.py validation/release_tests validation/profile_python_memory.py
+      - name: Ruff format
+        run: >-
+          uvx --from ruff==0.16.2 ruff format --check --config validation/regression/pyproject.toml
+          validation/regression validation/release_bundle.py validation/release_tests validation/profile_python_memory.py
+      - name: Strict mypy
+        env:
+          MYPYPATH: validation/regression
+        run: >-
+          uv run --no-project --python 3.13
+          --with mypy==2.3.0 --with pytest==9.1.1 --with adbc-driver-manager==1.12.0 --with falcon==4.3.1
+          --with psutil==7.2.2 --with types-psutil==7.2.2.20260518
+          --with 'vgi-rpc[http]==0.47.1'
+          mypy --explicit-package-bases --config-file validation/regression/pyproject.toml
+          validation/regression/tests validation/regression/soak validation/regression/deployment
+          validation/release_bundle.py validation/release_tests validation/profile_python_memory.py
+      - name: Isolated pydoclint
+        run: >-
+          uvx --python 3.13 --from pydoclint==0.9.1 pydoclint
+          --config validation/regression/pyproject.toml
+          validation/regression/tests validation/regression/soak validation/regression/deployment
+          validation/release_bundle.py validation/release_tests validation/profile_python_memory.py
+      - name: Release artifact integrity tests
+        run: >-
+          uv run --no-project --python 3.13 --with pytest==9.1.1
+          python -m pytest -o addopts= validation/release_tests -q
+      - name: Shell syntax
+        run: bash -n validation/run_regression.sh
+      - name: Shellcheck
+        run: shellcheck validation/run_regression.sh
+
+  # A reviewed archive hash identifies the exact validated wheels and tests,
+  # independently of subsequent source-repository commits. Configure both
+  # repository variables to enable this gate for every push/PR;
+  # workflow_dispatch supplies a candidate explicitly.
+  runtime:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.GRAINLIFT_PYTHON_CANDIDATE_URL != '' && vars.GRAINLIFT_PYTHON_CANDIDATE_SHA256 != '')
+    needs: quality
+    name: Wheel runtime (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.13', '3.14']
+    env:
+      CANDIDATE_URL: ${{ inputs.candidate_url || vars.GRAINLIFT_PYTHON_CANDIDATE_URL }}
+      CANDIDATE_SHA256: ${{ inputs.candidate_sha256 || vars.GRAINLIFT_PYTHON_CANDIDATE_SHA256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: 0.11.7
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.97.1
+      - run: uv python install '${{ matrix.python }}'
+      - name: Fetch and verify reviewed wheel candidate
+        run: >-
+          uv run --no-project --python '${{ matrix.python }}' python validation/release_bundle.py fetch
+          --url "$CANDIDATE_URL" --sha256 "$CANDIDATE_SHA256" --output target/python-candidate
+      - run: cargo build --locked -p adbc-driver-grainlift
+      - name: Validate isolated wheel installation and native ADBC runtime
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS) driver="$PWD/target/debug/libadbc_driver_grainlift.dylib" ;;
+            Linux) driver="$PWD/target/debug/libadbc_driver_grainlift.so" ;;
+            *) exit 1 ;;
+          esac
+          uv run --no-project --python '${{ matrix.python }}' python validation/release_bundle.py check \
+            --bundle target/python-candidate/bundle --python '${{ matrix.python }}' \
+            --driver "$driver" --evidence target/python-wheel-evidence
+      - name: Upload wheel runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-wheel-${{ matrix.os }}-${{ matrix.python }}
+          path: target/python-wheel-evidence
+          if-no-files-found: ignore

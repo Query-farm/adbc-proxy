@@ -1,0 +1,510 @@
+{
+  "profiling": true,
+  "samples": [
+    {
+      "seconds": 0.1014587499666959,
+      "rss_bytes": 80314368,
+      "arrow_allocated_bytes": 0,
+      "python_traced_bytes": 275248,
+      "python_peak_traced_bytes": 775751,
+      "tracemalloc_overhead_bytes": 117936,
+      "gc_collected": 6,
+      "tracked_objects": 57111,
+      "top_tracked_types": {
+        "builtins.function": 13757,
+        "builtins.dict": 8456,
+        "builtins.tuple": 6409,
+        "builtins.cell": 2981,
+        "weakref.ReferenceType": 2791,
+        "builtins.getset_descriptor": 2379,
+        "builtins.wrapper_descriptor": 1902,
+        "builtins.method_descriptor": 1797,
+        "builtins.builtin_function_or_method": 1675,
+        "builtins.type": 1639,
+        "builtins.list": 1513,
+        "_cython_3_2_9.cython_function_or_method": 1220,
+        "inspect.Parameter": 997,
+        "builtins.member_descriptor": 964,
+        "builtins.property": 596,
+        "builtins.module": 525,
+        "_frozen_importlib.ModuleSpec": 516,
+        "builtins.frozenset": 499,
+        "builtins.set": 429,
+        "_frozen_importlib_external.SourceFileLoader": 406
+      },
+      "live_threads": 2,
+      "allocation_growth": [
+        {
+          "file": "<frozen importlib._bootstrap_external>",
+          "bytes": 216305,
+          "allocations": 556
+        },
+        {
+          "file": "<development>/grainlift/validation/profile_python_memory.py",
+          "bytes": 24073,
+          "allocations": 362
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py",
+          "bytes": 14136,
+          "allocations": 33
+        },
+        {
+          "file": "<frozen importlib._bootstrap>",
+          "bytes": 7052,
+          "allocations": 94
+        },
+        {
+          "file": "<frozen abc>",
+          "bytes": 6624,
+          "allocations": 87
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/threading.py",
+          "bytes": 3299,
+          "allocations": 20
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/tracemalloc.py",
+          "bytes": 656,
+          "allocations": 2
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/soak/runner.py",
+          "bytes": 568,
+          "allocations": 3
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/trigger.py",
+          "bytes": 400,
+          "allocations": 1
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/server.py",
+          "bytes": 400,
+          "allocations": 1
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py",
+          "bytes": 151,
+          "allocations": 2
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/_weakrefset.py",
+          "bytes": 80,
+          "allocations": 1
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/httpx2/_status_codes.py",
+          "bytes": 56,
+          "allocations": 1
+        }
+      ]
+    },
+    {
+      "seconds": 31.848776625003666,
+      "rss_bytes": 95698944,
+      "arrow_allocated_bytes": 65728,
+      "python_traced_bytes": 1624393,
+      "python_peak_traced_bytes": 2495814,
+      "tracemalloc_overhead_bytes": 1429616,
+      "gc_collected": 816,
+      "tracked_objects": 60336,
+      "top_tracked_types": {
+        "builtins.function": 14114,
+        "builtins.dict": 8873,
+        "builtins.tuple": 6621,
+        "builtins.cell": 3109,
+        "weakref.ReferenceType": 2948,
+        "builtins.list": 2460,
+        "builtins.getset_descriptor": 2430,
+        "builtins.wrapper_descriptor": 1902,
+        "builtins.builtin_function_or_method": 1821,
+        "builtins.method_descriptor": 1797,
+        "builtins.type": 1683,
+        "_cython_3_2_9.cython_function_or_method": 1220,
+        "inspect.Parameter": 997,
+        "builtins.member_descriptor": 964,
+        "builtins.property": 597,
+        "builtins.module": 544,
+        "_frozen_importlib.ModuleSpec": 535,
+        "builtins.frozenset": 513,
+        "builtins.set": 457,
+        "_frozen_importlib_external.SourceFileLoader": 425
+      },
+      "live_threads": 12,
+      "allocation_growth": [
+        {
+          "file": "<frozen importlib._bootstrap_external>",
+          "bytes": 408986,
+          "allocations": 3313
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/mimetypes.py",
+          "bytes": 218831,
+          "allocations": 3344
+        },
+        {
+          "file": "<development>/grainlift-python/src/grainlift/isolation.py",
+          "bytes": 164797,
+          "allocations": 54
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/linecache.py",
+          "bytes": 106254,
+          "allocations": 1092
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/threading.py",
+          "bytes": 54317,
+          "allocations": 393
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/stringprep.py",
+          "bytes": 42776,
+          "allocations": 196
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/connection.py",
+          "bytes": 41705,
+          "allocations": 15
+        },
+        {
+          "file": "<development>/grainlift/validation/profile_python_memory.py",
+          "bytes": 35631,
+          "allocations": 510
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py",
+          "bytes": 32723,
+          "allocations": 235
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/response.py",
+          "bytes": 28888,
+          "allocations": 38
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/wasyncore.py",
+          "bytes": 26064,
+          "allocations": 177
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/http/server/_middleware.py",
+          "bytes": 25632,
+          "allocations": 500
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/ctypes/__init__.py",
+          "bytes": 25092,
+          "allocations": 146
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/buffers.py",
+          "bytes": 22589,
+          "allocations": 97
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/utilities.py",
+          "bytes": 20644,
+          "allocations": 93
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py",
+          "bytes": 19974,
+          "allocations": 104
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/server.py",
+          "bytes": 19096,
+          "allocations": 87
+        },
+        {
+          "file": "<frozen abc>",
+          "bytes": 18022,
+          "allocations": 216
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/parser.py",
+          "bytes": 17256,
+          "allocations": 167
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/http/server/_app_stream.py",
+          "bytes": 16398,
+          "allocations": 112
+        }
+      ]
+    },
+    {
+      "seconds": 64.3863257500343,
+      "rss_bytes": 96665600,
+      "arrow_allocated_bytes": 192,
+      "python_traced_bytes": 1322053,
+      "python_peak_traced_bytes": 2495814,
+      "tracemalloc_overhead_bytes": 1405296,
+      "gc_collected": 70,
+      "tracked_objects": 59911,
+      "top_tracked_types": {
+        "builtins.function": 14097,
+        "builtins.dict": 8819,
+        "builtins.tuple": 6589,
+        "builtins.cell": 3089,
+        "weakref.ReferenceType": 2935,
+        "builtins.list": 2435,
+        "builtins.getset_descriptor": 2416,
+        "builtins.wrapper_descriptor": 1902,
+        "builtins.builtin_function_or_method": 1809,
+        "builtins.method_descriptor": 1797,
+        "builtins.type": 1683,
+        "_cython_3_2_9.cython_function_or_method": 1220,
+        "inspect.Parameter": 997,
+        "builtins.member_descriptor": 964,
+        "builtins.property": 597,
+        "builtins.module": 544,
+        "_frozen_importlib.ModuleSpec": 535,
+        "builtins.frozenset": 513,
+        "builtins.set": 457,
+        "_frozen_importlib_external.SourceFileLoader": 425
+      },
+      "live_threads": 12,
+      "allocation_growth": [
+        {
+          "file": "<frozen importlib._bootstrap_external>",
+          "bytes": 408941,
+          "allocations": 3312
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/mimetypes.py",
+          "bytes": 218831,
+          "allocations": 3344
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/linecache.py",
+          "bytes": 106254,
+          "allocations": 1092
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/threading.py",
+          "bytes": 47570,
+          "allocations": 335
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/stringprep.py",
+          "bytes": 42776,
+          "allocations": 196
+        },
+        {
+          "file": "<development>/grainlift/validation/profile_python_memory.py",
+          "bytes": 37215,
+          "allocations": 529
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/wasyncore.py",
+          "bytes": 26344,
+          "allocations": 182
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/response.py",
+          "bytes": 26336,
+          "allocations": 3
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/http/server/_middleware.py",
+          "bytes": 23006,
+          "allocations": 530
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py",
+          "bytes": 21847,
+          "allocations": 112
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py",
+          "bytes": 20590,
+          "allocations": 123
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/utilities.py",
+          "bytes": 20414,
+          "allocations": 87
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/server.py",
+          "bytes": 18776,
+          "allocations": 86
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/buffers.py",
+          "bytes": 18764,
+          "allocations": 79
+        },
+        {
+          "file": "<frozen abc>",
+          "bytes": 17967,
+          "allocations": 215
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/falcon/routing/compiled.py",
+          "bytes": 15953,
+          "allocations": 151
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/adjustments.py",
+          "bytes": 15905,
+          "allocations": 76
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/rpc/_types.py",
+          "bytes": 15512,
+          "allocations": 158
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/encodings/idna.py",
+          "bytes": 14184,
+          "allocations": 53
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/http/server/_app_stream.py",
+          "bytes": 12432,
+          "allocations": 64
+        }
+      ]
+    },
+    {
+      "seconds": 69.1301676670555,
+      "rss_bytes": 95993856,
+      "arrow_allocated_bytes": 192,
+      "python_traced_bytes": 1169735,
+      "python_peak_traced_bytes": 2495814,
+      "tracemalloc_overhead_bytes": 1348880,
+      "gc_collected": 350,
+      "tracked_objects": 59214,
+      "top_tracked_types": {
+        "builtins.function": 14037,
+        "builtins.dict": 8772,
+        "builtins.tuple": 6520,
+        "builtins.cell": 3000,
+        "weakref.ReferenceType": 2913,
+        "builtins.getset_descriptor": 2416,
+        "builtins.list": 2391,
+        "builtins.wrapper_descriptor": 1902,
+        "builtins.method_descriptor": 1797,
+        "builtins.builtin_function_or_method": 1737,
+        "builtins.type": 1683,
+        "_cython_3_2_9.cython_function_or_method": 1220,
+        "inspect.Parameter": 997,
+        "builtins.member_descriptor": 964,
+        "builtins.property": 597,
+        "builtins.module": 544,
+        "_frozen_importlib.ModuleSpec": 535,
+        "builtins.frozenset": 511,
+        "builtins.set": 456,
+        "_frozen_importlib_external.SourceFileLoader": 425
+      },
+      "live_threads": 1,
+      "allocation_growth": [
+        {
+          "file": "<frozen importlib._bootstrap_external>",
+          "bytes": 408941,
+          "allocations": 3312
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/mimetypes.py",
+          "bytes": 218831,
+          "allocations": 3344
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/linecache.py",
+          "bytes": 106254,
+          "allocations": 1092
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/stringprep.py",
+          "bytes": 42776,
+          "allocations": 196
+        },
+        {
+          "file": "<development>/grainlift/validation/profile_python_memory.py",
+          "bytes": 39575,
+          "allocations": 553
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/http/server/_middleware.py",
+          "bytes": 21962,
+          "allocations": 520
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py",
+          "bytes": 21086,
+          "allocations": 140
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/wasyncore.py",
+          "bytes": 20792,
+          "allocations": 92
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/utilities.py",
+          "bytes": 20414,
+          "allocations": 87
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/buffers.py",
+          "bytes": 18764,
+          "allocations": 79
+        },
+        {
+          "file": "<frozen abc>",
+          "bytes": 17967,
+          "allocations": 215
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/task.py",
+          "bytes": 16055,
+          "allocations": 72
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/server.py",
+          "bytes": 15968,
+          "allocations": 66
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/adjustments.py",
+          "bytes": 15817,
+          "allocations": 74
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/rpc/_types.py",
+          "bytes": 15512,
+          "allocations": 158
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/encodings/idna.py",
+          "bytes": 14184,
+          "allocations": 53
+        },
+        {
+          "file": "<development>/vgi-rpc/vgi_rpc/http/server/_app_stream.py",
+          "bytes": 11328,
+          "allocations": 50
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/parser.py",
+          "bytes": 10377,
+          "allocations": 58
+        },
+        {
+          "file": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/annotationlib.py",
+          "bytes": 8921,
+          "allocations": 75
+        },
+        {
+          "file": "<development>/grainlift/validation/regression/.venv/lib/python3.14/site-packages/waitress/channel.py",
+          "bytes": 8113,
+          "allocations": 37
+        }
+      ]
+    }
+  ]
+}

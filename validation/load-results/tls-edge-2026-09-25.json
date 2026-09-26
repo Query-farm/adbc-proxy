@@ -1,0 +1,53 @@
+{
+  "timestamp_utc": "2026-09-26T03:51:50.820397+00:00",
+  "environment": {
+    "python": "3.14.7",
+    "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+    "caddy_version": "v2.11.4 h1:XKxkMTgNSizEvKG6QHue6cAsFOteU2qA61w2tKkCWi0=",
+    "caddy_binary_sha256": "e9ebf99dfd4b72259debe1830c83e86c63fb89a88e28b4e7c5e78a35fa76c92d",
+    "versions": {
+      "grainlift-python": "0.1.0",
+      "vgi-rpc": "0.47.1",
+      "waitress": "3.0.2"
+    }
+  },
+  "transport": "verified HTTPS -> Caddy -> loopback HTTP -> Waitress -> Grainlift SDK",
+  "duration_seconds": 1.375,
+  "checks": {
+    "trusted_ca_and_hostname": true,
+    "missing_and_invalid_credentials": "rejected with HTTP 401",
+    "https_arrow_roundtrip": true,
+    "result_batch_boundaries": {
+      "limit": 4096,
+      "below": "pass",
+      "at": "pass",
+      "above": "reject"
+    },
+    "private_backend_error_sanitized": true,
+    "request_body_boundaries": {
+      "4095": 400,
+      "4096": 400,
+      "4097": 413
+    },
+    "waitress_exclusive_body_threshold": 4097,
+    "untrusted_ca": "certificate verification failed",
+    "wrong_hostname": "certificate verification failed",
+    "native_https_untrusted_ca": {
+      "outcome": "connection rejected",
+      "adbc_status": "IO"
+    },
+    "active_request_drained_on_shutdown": true,
+    "host_shutdown": {
+      "connections_closed": true,
+      "listener_closed": true
+    },
+    "edge_graceful_shutdown": true,
+    "log_redaction": "bearer, SQL, Arrow values, and raw backend errors absent; access logs present"
+  },
+  "limitations": [
+    "Positive HTTPS uses the Python VGI client and an explicitly trusted ephemeral CA.",
+    "Native HTTPS only verifies rejection of the untrusted CA; the native HTTP client has no custom CA option.",
+    "Certificates, private keys, credentials and raw logs were temporary and are not retained.",
+    "Request bodies below and at the limit reach the Arrow parser and intentionally fail with HTTP 400."
+  ]
+}

@@ -366,6 +366,20 @@ Grainlift outside a development environment.
 
 ## Development and validation
 
+The [toolkit-backed regression suite](validation/regression/README.md) exercises
+the native ADBC client against a deterministic Python worker. Run
+`./validation/run_regression.sh` for its Python quality gates and HTTP integration
+tests. It requires the sibling development toolkit and VGI-RPC checkouts.
+
+The [Python toolkit hardening record](validation/hardening/README.md) documents
+the applied SDK patch, passing native regression tests, and remaining release gates.
+
+See [Python deployment guidance](docs/python-deployment.md) for process isolation,
+credential rotation, TLS routing, and operational limits, and the
+[wheel release gate](validation/RELEASE.md) for reproducible candidate validation.
+The [readiness record](docs/python-release-readiness.md) separates completed local
+checks from publication, remote CI, and deployment gates still outstanding.
+
 Run the Rust quality gates with:
 
 ```console

@@ -17,7 +17,122 @@
 
 # Validation results
 
-Last run: 2026-09-23 on macOS 15.6.1 arm64.
+Latest Python-worker validation: 2026-09-26 on macOS 15.6.1 arm64.
+The downstream-driver results below retain their original 2026-09-23 provenance.
+
+## Python-worker load and TLS edge — 2026-09-25
+
+The native ADBC C ABI drove an independent Waitress 3.0.2 host with one isolated
+Python worker process per connection. Environment: Python 3.14.7, PyArrow 25.0.1,
+ADBC manager 1.12.0, modified VGI-RPC 0.47.1, grainlift-python 0.1.0, macOS
+15.6.1 arm64. Reports include exact SDK source and native-driver hashes.
+
+Each of eight clients verified all 4096 rows and 64-byte binary payloads per
+query, pulled in 512-row batches, opened a new connection every 25 queries, and
+injected a recoverable structured error every ten queries. IPC/request budgets
+were 2 MiB, batch budget 1 MiB, worker startup deadline 15 seconds and operation
+deadline five seconds. The host used sixteen request threads and a ten-session
+quota. These are local synthetic workloads, not downstream-database capacity.
+
+| Measure | 180-second run | 300-second run |
+|---|---:|---:|
+| Verified queries | 11,661 | 28,472 |
+| Queries/second including connection churn | 64.67 | 94.67 |
+| Rows/second | 264,880 | 387,752 |
+| Completed connection lifecycles | 471 | 1,143 |
+| Expected injected errors | 1,401 | 3,418 |
+| Unexpected errors | 0 | 0 |
+| Query p50 / p95 / p99 (ms) | 74.2 / 257.3 / 587.5 | 67.8 / 112.6 / 166.0 |
+| Maximum query latency (ms) | 2,769.0 | 673.8 |
+| Peak host RSS (bytes) | 107,905,024 | 122,142,720 |
+| Peak aggregate child RSS (bytes) | 560,889,856 | 563,560,448 |
+| Jain fairness index | 0.999978 | 0.999995 |
+| Child processes after recovery | 0 | 0 |
+| Host descriptors before / after | 12 / 12 | 12 / 12 |
+
+All clients progressed: the five-minute run completed 3,546–3,570 queries per
+client. The host exited normally after draining. Quantiles include every query
+in a fixed-memory logarithmic histogram with roughly one-percent resolution.
+Connection startup and intentional errors are outside query latency but inside
+throughput and per-client completion-gap measurements. Concurrent development
+activity affected the machine; differences between runs are not an optimization
+claim or a substitute for measurements on dedicated deployment resources.
+
+Host RSS grew by 14,811,136 bytes after the first twenty seconds of the five-
+minute run. Minute-window median RSS rose from 103.9 to 115.7 MiB, so zero errors
+and released descriptors do **not** establish a memory plateau. Further memory
+diagnostics are recorded separately. The final CLI request-limit translation
+was fixed afterward; this workload creates Waitress directly and did not exercise
+that CLI helper or requests near the request-size limit.
+
+Commands, from `validation/regression`:
+
+```sh
+uv run python -m soak --driver ../../target/debug/libadbc_driver_grainlift.dylib \
+  --seconds 180 --clients 8 --output ../load-results/python-isolated-http-8clients-180s.json
+uv run python -m soak --driver ../../target/debug/libadbc_driver_grainlift.dylib \
+  --seconds 300 --clients 8 --output ../load-results/python-isolated-http-8clients-300s.json
+```
+
+Machine-readable results:
+[three-minute run](load-results/python-isolated-http-8clients-180s.json),
+[five-minute run](load-results/python-isolated-http-8clients-300s.json).
+
+The separate [TLS-edge harness](regression/deployment/README.md) passed with
+Caddy 2.11.4 and ephemeral certificates. It verified HTTPS Python RPC, trusted
+CA/hostname checks, rejection of untrusted/wrong-host certificates, native HTTPS
+rejection of the untrusted certificate, missing/invalid credentials, request and
+result limits below/at/above 4096 bytes, error/log sanitization, active-request
+draining and clean shutdown. Waitress's exclusive threshold is configured as
+4097 while the edge and SDK retain the inclusive 4096-byte quota.
+[Sanitized TLS evidence](load-results/tls-edge-2026-09-25.json) explicitly records
+that positive native HTTPS with a custom CA was not tested. No keys, credentials,
+raw logs, or local Caddy state are retained.
+
+## Python-worker memory diagnostics — 2026-09-26
+
+A separate five-minute run used the same eight-client workload with a bounded
+host diagnostic that collected garbage and counted live object types every
+thirty seconds. It completed **24,944 verified queries**, 82.80 queries/second,
+with zero unexpected errors. Query p50/p95/p99 were 69.9/138.8/329.9 ms; maximum
+was 1,291.9 ms. Peak host RSS was 120,700,928 bytes and peak aggregate child RSS
+was 674,889,728 bytes. Jain fairness was 0.999993; recovery left zero children,
+12 host descriptors, and a normal host exit.
+
+Tracked Python objects stabilized near 69,000 during load and fell to 59,183
+after shutdown (57,124 before startup). Arrow's allocated-byte counter returned
+to 192 bytes, and the final sample had one live thread. Host RSS reached about
+115 MiB during load and fell to 104.2 MiB after final collection, compared with
+76.1 MiB initially. These observations narrow the investigation, but neither
+forced collection nor a five-minute sample proves that native allocations or
+allocator retention will plateau over hours. **The sustained-memory gate stays
+open.** Profiling changes allocator behavior, so these throughput figures are
+diagnostic evidence, not a capacity comparison with the uninstrumented runs.
+
+An earlier tracemalloc experiment perturbed latency enough to hit configured
+deadlines: twelve queries completed and four clients reported `ArrowInvalid`.
+It is retained as a failed diagnostic, not counted as a successful load run or
+evidence of a production leak. The final profiler makes allocation tracing
+optional and collects only locations, type counts and aggregate metrics, never
+object values. Final samples are written before the host acknowledges shutdown.
+Two regression cases cover that acknowledgement ordering and cleanup when the
+controller disconnects during startup; a subsequent five-second, two-client
+profile smoke completed 276 queries without errors after those harness fixes.
+
+From the repository root:
+
+```sh
+GRAINLIFT_MEMORY_PROFILE="$PWD/validation/load-results/python-gc-diagnostic.json" \
+  PYTHONPATH="$PWD/validation/regression" \
+  uv run --project validation/regression python validation/profile_python_memory.py \
+  --driver target/debug/libadbc_driver_grainlift.dylib --seconds 300 --clients 8 \
+  --output validation/load-results/python-gc-workload.json
+```
+
+Evidence: [GC workload](load-results/python-gc-workload.json),
+[GC diagnostic](load-results/python-gc-diagnostic.json),
+[failed tracing workload](load-results/python-tracemalloc-workload.json), and
+[tracing diagnostic](load-results/python-tracemalloc-diagnostic.json).
 
 ## Versions
 

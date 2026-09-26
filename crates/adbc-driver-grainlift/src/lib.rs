@@ -887,6 +887,8 @@ impl RemoteTransport {
         let endpoint = normalize_endpoint(endpoint);
         if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
             let http = reqwest::blocking::Client::builder()
+                // VGI's timeout builder setting does not reconfigure a supplied client.
+                .timeout(request_timeout)
                 .build()
                 .map_err(|error| Error::with_message_and_status(error.to_string(), Status::IO))?;
             return Ok(Self::Http(HttpTransport {

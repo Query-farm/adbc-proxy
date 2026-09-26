@@ -13,22 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-/target
-/build
-/generated
-/validation-report*.xml
-.env.build
-.env.override
-.grainlift-validation.pid
-.grainlift-validation-container
-.doit.db
-.ruff_cache/
-/validation/regression/.venv/
-/validation/regression/.mypy_cache/
-/validation/regression/.pytest_cache/
-__pycache__/
-*.pyc
-*.dylib
-*.so
-*.dll
-.DS_Store
+"""Run the local Caddy TLS-edge validation command."""
+
+from .tls_edge import main
+
+main()

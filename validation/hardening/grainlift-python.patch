@@ -1,0 +1,1468 @@
+--- a/README.md
++++ b/README.md
+@@ -8,7 +8,7 @@
+ not a complete ADBC driver SDK. It supports authenticated connections, statements,
+ SQL execution, optional schema inference, and pull-based results. Transactions,
+ prepared statements, binding, metadata discovery, ingestion, partitioned results,
+-Substrait, and statement/connection cancellation return ADBC NOT_IMPLEMENTED.
++and Substrait return ADBC NOT_IMPLEMENTED. Cancellation is opt-in, as described below.
+ Use autocommit=True with the Python ADBC driver manager.
+ 
+ ## Development
+@@ -41,10 +41,17 @@
+ 
+ Each service owns its sessions in one process. Route all calls, including
+ continuations, to that process. Restart invalidates every handle. There is no
+-transparent multi-replica behavior. This first implementation serializes worker
+-callbacks under a service lock; a blocking callback blocks other requests and
+-the reaper. Use only bounded/cooperative callbacks. There is no hard execution
+-deadline or preemption of Python or downstream calls.
++transparent multi-replica behavior. Calls on one session serialize under its own
++lock; independent sessions and connection factories can run concurrently. Worker
++factories must therefore be thread-safe. Opening connections reserve session quota
++before invoking the factory. The reaper skips busy sessions.
++
++Session lock waits default to five seconds. In-process callbacks must still be
++bounded and cooperative: Python threads cannot safely preempt arbitrary calls.
++`Service.close()` rejects new work and requests cancellation of busy connections.
++It waits up to `Limits.shutdown_seconds` for busy session locks, then reports ADBC
++TIMEOUT if callbacks remain. Their eventual return triggers cleanup. This wait
++budget does not preempt in-process cancellation or cleanup hooks.
+ 
+ Defaults: 64 sessions, 32 statements per session, one result per statement,
+ 1 MiB of referenced Arrow buffers per batch, 1 MiB schema descriptor,
+@@ -72,12 +79,60 @@
+ Do not expose plain HTTP with bearer tokens on an untrusted network.
+ TCP, mTLS, and Iroh serving are not implemented or validated here.
+ 
+-The service suppresses the process's vgi_rpc logging namespace because transport
+-diagnostics can contain SQL, credentials, Arrow values, and raw exceptions.
+-Do not re-enable those logs. AdbcError preserves intentional client-facing status,
++The WSGI wrapper filters VGI-RPC transport logs during Grainlift requests because
++diagnostics can contain SQL, credentials, Arrow values, and raw exceptions. It
++preserves logger levels, handlers, propagation, and unrelated applications' logs.
++It installs filters on loaded VGI-RPC loggers at app creation and request entry;
++re-audit this boundary when adding transports or upgrading VGI-RPC. Grainlift's
++own access event contains only status and duration. AdbcError preserves client-facing status,
+ SQLSTATE, vendor code and binary details; unexpected worker errors become a generic
+ INTERNAL error. Do not include secrets in client-facing AdbcError messages.
+ Worker-authored logging is the worker author's responsibility.
++
++## Optional process isolation
++
++```python
++from grainlift import IsolatedWorker, Limits, Service
++
++worker = IsolatedWorker(
++    "my_worker:MyWorker",  # Importable Worker subclass, constructed in the child.
++    worker_options={"example_setting": "value"},
++    timeout_seconds=5,
++    startup_timeout_seconds=10,
++    max_message_bytes=2 * 1024 * 1024,
++    max_results=32,
++)
++service = Service(worker, limits=Limits(sessions=16))
++app = service.app(tokens={"replace-with-a-secret": "configured-principal"})
++```
++
++Each connection owns a spawned process and two anonymous pipes. Worker options
++must be JSON-compatible. Results use capped JSON/Arrow IPC messages; SQL executes
++once and each fetch pulls one batch. Schema and transport overhead count toward
++the IPC cap. Overflow returns INVALID_DATA and releases the affected result.
++The child also caps live results independently of the service's statement quota.
++Use an importable module and guard executable entry points with
++`if __name__ == "__main__":` for multiprocessing spawn.
++
++Opening, execution, fetching, schema inference, result release, and closing have
++finite deadlines. Timeout terminates the child and returns TIMEOUT; a crash
++returns IO. Termination waits up to 0.7 additional seconds for the child to exit.
++Cancellation also terminates the child. All existing statements/results on that
++connection become unusable; the client must close it and reconnect explicitly.
++No transaction recovery or rollback behavior is emulated. Per-operation deadlines
++do not constitute a single aggregate service-shutdown deadline.
++
++In-process workers may override `Connection.cancel()` with a thread-safe,
++nonblocking hook. Otherwise cancellation returns NOT_IMPLEMENTED. Connection
++cancellation authenticates the session owner; statement cancellation additionally
++requires an operation currently active on that statement. Closing an HTTP result
++stream releases that cursor and is separate from ADBC cancellation.
++
++Isolation contains callback hangs and crashes; it is not a sandbox for untrusted
++code. Session quotas bound child count and IPC limits bound transferred data.
++Apply OS/container memory and CPU quotas to bound allocations inside a worker.
++Workers must not spawn unmanaged descendants. Child stdout/stderr are discarded;
++worker-managed logging destinations remain the author's responsibility.
+ 
+ ## Validation and native-client limitation
+ 
+--- a/src/grainlift/__init__.py
++++ b/src/grainlift/__init__.py
+@@ -3,6 +3,16 @@
+ """Python-authored ADBC services, accessed with the Grainlift native driver."""
+ 
+ from .api import AdbcError, Connection, Limits, QueryResult, Worker
++from .isolation import IsolatedWorker
+ from .server import Service, serve
+ 
+-__all__ = ["AdbcError", "Connection", "Limits", "QueryResult", "Service", "Worker", "serve"]
++__all__ = [
++    "AdbcError",
++    "Connection",
++    "IsolatedWorker",
++    "Limits",
++    "QueryResult",
++    "Service",
++    "Worker",
++    "serve",
++]
+--- a/src/grainlift/api.py
++++ b/src/grainlift/api.py
+@@ -6,6 +6,7 @@
+ 
+ import base64
+ import json
++import math
+ from collections.abc import Iterator, Mapping
+ from dataclasses import dataclass
+ 
+@@ -56,10 +57,28 @@
+     request_bytes: int = 2 * 1024 * 1024
+     sql_bytes: int = 64 * 1024
+     idle_seconds: float = 300
++    lock_timeout_seconds: float = 5
++    shutdown_seconds: float = 5
+ 
+     def __post_init__(self) -> None:
+-        if any(value <= 0 for value in vars(self).values()):
+-            raise ValueError("All limits must be positive")
++        for name in (
++            "sessions",
++            "statements_per_session",
++            "batch_bytes",
++            "request_bytes",
++            "sql_bytes",
++        ):
++            value = getattr(self, name)
++            if type(value) is not int or value <= 0:
++                raise ValueError(f"{name} must be a positive integer")
++        for name in ("idle_seconds", "lock_timeout_seconds", "shutdown_seconds"):
++            value = getattr(self, name)
++            if (
++                type(value) not in (int, float)
++                or value <= 0
++                or (isinstance(value, float) and not math.isfinite(value))
++            ):
++                raise ValueError(f"{name} must be a finite positive number")
+ 
+ 
+ @dataclass
+@@ -88,6 +107,10 @@
+     def close(self) -> None:
+         pass
+ 
++    def cancel(self) -> None:
++        """Request cancellation concurrently; implementations must be thread-safe and nonblocking."""
++        raise AdbcError("Downstream cancellation is not implemented", "not_implemented")
++
+ 
+ class Worker:
+     """One configured target. Each connection belongs to an authenticated principal."""
+--- a/src/grainlift/server.py
++++ b/src/grainlift/server.py
+@@ -5,8 +5,8 @@
+ from __future__ import annotations
+ 
+ import hmac
++import inspect
+ import json
+-import logging
+ import secrets
+ import threading
+ import time
+@@ -19,22 +19,56 @@
+ 
+ from . import protocol as p
+ from .api import AdbcError, Connection, Limits, QueryResult, Worker
++from .telemetry import PrivateApplication
+ 
+ 
+ def guarded(method):
+-    """Serialize access and prevent arbitrary worker exceptions crossing the boundary."""
++    """Serialize only one session; never hold the registry lock across a worker callback."""
++
++    signature = inspect.signature(method)
+ 
+     @wraps(method)
+     def call(self, *args, **kwargs):
++        bound = signature.bind(self, *args, **kwargs)
++        sid = bound.arguments.get("session_id")
++        session = None
+         with self._lock:
+             if self._closed:
+                 raise AdbcError("Service is closed", "invalid_state")
+-            try:
+-                return method(self, *args, **kwargs)
+-            except AdbcError:
+-                raise
+-            except Exception:  # noqa: BLE001 -- sanitize untrusted worker exceptions
+-                raise AdbcError("Worker operation failed", "internal") from None
++        if sid is not None:
++            session = self._session(sid, bound.arguments["ctx"])
++            if not session.lock.acquire(timeout=self.limits.lock_timeout_seconds):
++                raise AdbcError("Session is busy", "timeout")
++        try:
++            if session is not None:
++                self._session(sid, bound.arguments["ctx"])
++                with session.cancel_lock:
++                    statement_id = bound.arguments.get("statement_id")
++                    if statement_id is None and "result_id" in bound.arguments:
++                        statement_id = next(
++                            (
++                                key
++                                for key, stmt in session.statements.items()
++                                if stmt.result_id == bound.arguments["result_id"]
++                            ),
++                            None,
++                        )
++                    session.active_statement = statement_id
++            return method(self, *args, **kwargs)
++        except AdbcError:
++            raise
++        except Exception:  # noqa: BLE001 -- sanitize untrusted worker exceptions
++            raise AdbcError("Worker operation failed", "internal") from None
++        finally:
++            if session is not None:
++                with session.cancel_lock:
++                    session.active_statement = None
++                session.touched = time.monotonic()
++                try:
++                    if self._closed:
++                        self._close_session(sid, session)
++                finally:
++                    session.lock.release()
+ 
+     return call
+ 
+@@ -71,8 +105,16 @@
+     touched: float = field(default_factory=time.monotonic)
+     statements: dict[str, _Statement] = field(default_factory=dict)
+     results: dict[str, _Result] = field(default_factory=dict)
++    lock: threading.RLock = field(default_factory=threading.RLock)
++    cancel_lock: threading.Lock = field(default_factory=threading.Lock)
++    active_statement: str | None = None
++    closing: bool = False
++    closed: bool = False
+ 
+     def close(self) -> None:
++        if self.closed:
++            return
++        self.closing = True
+         for result in self.results.values():
+             result.close()
+         self.results.clear()
+@@ -81,6 +123,7 @@
+             self.connection.close()
+         except Exception:  # noqa: BLE001, S110 -- continue cleanup without logging secrets
+             pass
++        self.closed = True
+ 
+ 
+ class Service:
+@@ -92,6 +135,7 @@
+         self._sessions: dict[str, _Session] = {}
+         self._lock = threading.RLock()
+         self._closed = False
++        self._opening = 0
+         self._stop = threading.Event()
+         self._reaper = threading.Thread(
+             target=self._reap_loop, daemon=True, name="grainlift-reaper"
+@@ -106,27 +150,55 @@
+ 
+     def _reap_loop(self):
+         while not self._stop.wait(min(1.0, self.limits.idle_seconds / 2)):
+-            with self._lock:
+-                self._reap()
++            self._reap()
+ 
+     def _reap(self):
+         now = time.monotonic()
+-        for sid, session in list(self._sessions.items()):
+-            if now - session.touched >= self.limits.idle_seconds:
+-                self._sessions.pop(sid).close()
++        with self._lock:
++            sessions = list(self._sessions.items())
++        for sid, session in sessions:
++            if not session.lock.acquire(blocking=False):
+                 continue
+-            for rid, result in list(session.results.items()):
+-                if now - result.touched >= self.limits.idle_seconds:
+-                    session.results.pop(rid).close()
++            try:
++                if now - session.touched >= self.limits.idle_seconds:
++                    self._close_session(sid, session)
++                else:
++                    for rid, result in list(session.results.items()):
++                        if now - result.touched >= self.limits.idle_seconds:
++                            session.results.pop(rid).close()
++            finally:
++                session.lock.release()
++
++    def _close_session(self, sid, session):
++        # Keep the quota reservation until potentially blocking cleanup finishes.
++        session.close()
++        with self._lock:
++            if self._sessions.get(sid) is session:
++                del self._sessions[sid]
+ 
+     def close(self):
+         self._stop.set()
+         with self._lock:
+             self._closed = True
+-            for session in self._sessions.values():
+-                session.close()
+-            self._sessions.clear()
+-        self._reaper.join(timeout=2)
++            sessions = list(self._sessions.items())
++        deadline = time.monotonic() + self.limits.shutdown_seconds
++        for sid, session in sessions:
++            if not session.lock.acquire(blocking=False):
++                try:
++                    session.connection.cancel()
++                except Exception:  # noqa: BLE001, S110 -- continue shutdown without logging secrets
++                    pass
++                if not session.lock.acquire(timeout=max(0, deadline - time.monotonic())):
++                    # The operation's finally block closes it when it returns.
++                    continue
++            try:
++                self._close_session(sid, session)
++            finally:
++                session.lock.release()
++        self._reaper.join(timeout=max(0, deadline - time.monotonic()))
++        with self._lock:
++            if self._sessions or self._opening:
++                raise AdbcError("Shutdown is waiting for worker callbacks", "timeout")
+ 
+     @staticmethod
+     def _principal(ctx):
+@@ -135,13 +207,13 @@
+         return ctx.auth.principal
+ 
+     def _session(self, sid, ctx):
+-        self._reap()
+         principal = self._principal(ctx)
+-        session = self._sessions.get(sid)
+-        if session is None or session.principal != principal:
+-            raise AdbcError("Session is unavailable", "not_found")
+-        session.touched = time.monotonic()
+-        return session
++        with self._lock:
++            session = self._sessions.get(sid)
++            if session is None or session.principal != principal or session.closing:
++                raise AdbcError("Session is unavailable", "not_found")
++            session.touched = time.monotonic()
++            return session
+ 
+     def _statement(self, sid, statement_id, ctx):
+         session = self._session(sid, ctx)
+@@ -169,19 +241,36 @@
+                 raise AdbcError("Invalid options", "invalid_arguments") from None
+             if options != []:
+                 raise AdbcError("Caller-supplied options are not supported", "not_implemented")
+-        self._reap()
+-        if len(self._sessions) >= self.limits.sessions:
+-            raise AdbcError("Session limit reached", "invalid_state")
+-        connection = self.worker.connect(principal)
+-        sid = secrets.token_urlsafe(24)
+-        self._sessions[sid] = _Session(principal, connection)
+-        return p.batch(p.SESSION, session_id=sid)
++        with self._lock:
++            if self._closed:
++                raise AdbcError("Service is closed", "invalid_state")
++            if len(self._sessions) + self._opening >= self.limits.sessions:
++                raise AdbcError("Session limit reached", "invalid_state")
++            self._opening += 1
++        connection = None
++        inserted = False
++        try:
++            connection = self.worker.connect(principal)
++            sid = secrets.token_urlsafe(24)
++            response = p.batch(p.SESSION, session_id=sid)
++            with self._lock:
++                if self._closed:
++                    raise AdbcError("Service is closed", "invalid_state")
++                self._sessions[sid] = _Session(principal, connection)
++                inserted = True
++            return response
++        finally:
++            try:
++                if connection is not None and not inserted:
++                    connection.close()
++            finally:
++                with self._lock:
++                    self._opening -= 1
+ 
+     @guarded
+     def close_connection(self, session_id, ctx):
+         session = self._session(session_id, ctx)
+-        self._sessions.pop(session_id)
+-        session.close()
++        self._close_session(session_id, session)
+         return p.batch(p.OK, ok=True)
+ 
+     @guarded
+@@ -293,12 +382,44 @@
+     @guarded
+     def set_connection_option(self, session_id, key, value_json, ctx):
+         self._session(session_id, ctx)
+-        if key == "adbc.connection.autocommit" and json.loads(value_json) == {
++        try:
++            value = json.loads(value_json)
++        except (ValueError, TypeError):
++            raise AdbcError("Invalid option value", "invalid_arguments") from None
++        if key == "adbc.connection.autocommit" and value == {
+             "type": "string",
+             "value": "true",
+         }:
+             return p.batch(p.OK, ok=True)
+         raise AdbcError("Connection option is not supported", "not_implemented")
++
++    def cancel_connection(self, session_id, ctx):
++        """Call a nonblocking backend cancellation hook without the session lock."""
++        session = self._session(session_id, ctx)
++        with session.cancel_lock:
++            try:
++                session.connection.cancel()
++            except AdbcError:
++                raise
++            except Exception:  # noqa: BLE001 -- sanitize downstream cancellation errors
++                raise AdbcError("Cancellation failed", "internal") from None
++        return p.batch(p.OK, ok=True)
++
++    def cancel_statement(self, session_id, statement_id, ctx):
++        """Cancel only an active operation on the selected statement."""
++        session = self._session(session_id, ctx)
++        with session.cancel_lock:
++            if statement_id not in session.statements:
++                raise AdbcError("Statement is unavailable", "not_found")
++            if session.active_statement != statement_id:
++                raise AdbcError("No cancellable operation on this statement", "not_implemented")
++            try:
++                session.connection.cancel()
++            except AdbcError:
++                raise
++            except Exception:  # noqa: BLE001 -- sanitize downstream cancellation errors
++                raise AdbcError("Cancellation failed", "internal") from None
++        return p.batch(p.OK, ok=True)
+ 
+     @guarded
+     def get_connection_option(self, session_id, key, value_type, ctx):
+@@ -354,19 +475,7 @@
+             enable_landing_page=False,
+             enable_describe_page=False,
+         )
+-        # VGI diagnostic/access logging may include query arguments and raw errors.
+-        # This initial toolkit disables that namespace; lifecycle counters can be
+-        # added later with a deliberately redacted telemetry contract.
+-        logger = logging.getLogger("vgi_rpc")
+-        logger.handlers = [logging.NullHandler()]
+-        logger.propagate = False
+-        logger.disabled = True
+-        for name, child in logging.Logger.manager.loggerDict.items():
+-            if name.startswith("vgi_rpc.") and isinstance(child, logging.Logger):
+-                child.handlers = []
+-                child.propagate = True
+-                child.disabled = True
+-        return app
++        return PrivateApplication(app)
+ 
+ 
+ def serve(worker: Worker, *, token: str, port: int = 8080, limits: Limits | None = None):
+--- /dev/null
++++ b/src/grainlift/isolation.py
+@@ -0,0 +1,387 @@
++# Copyright (c) 2026 Query Farm LLC
++# SPDX-License-Identifier: Apache-2.0
++"""Optional process-per-connection execution with finite callback deadlines.
++
++This isolates failures, not untrusted code. Worker factories are trusted,
++importable module:attribute names. Killing a worker invalidates its entire
++connection, statements and results; reconnection is always explicit.
++"""
++
++from __future__ import annotations
++
++import base64
++import importlib
++import io
++import json
++import math
++import multiprocessing
++import os
++import struct
++import threading
++
++import pyarrow as pa
++
++from .api import AdbcError, Connection, QueryResult, Worker
++
++
++class _BoundedBuffer(io.BytesIO):
++    def __init__(self, limit):
++        super().__init__()
++        self.limit = limit
++
++    def write(self, value):
++        if self.tell() + len(value) > self.limit:
++            raise AdbcError("Isolated Arrow response exceeds limit", "invalid_data")
++        return super().write(value)
++
++
++def _arrow_bytes(schema, batch, limit):
++    out = _BoundedBuffer(limit)
++    with pa.ipc.new_stream(out, schema) as writer:
++        if batch is not None:
++            if batch.get_total_buffer_size() > limit:
++                raise AdbcError("Isolated batch exceeds limit", "invalid_data")
++            writer.write_batch(batch)
++    return out.getvalue()
++
++
++def _encode(header, payload, limit):
++    metadata = json.dumps(header, allow_nan=False).encode()
++    if 4 + len(metadata) + len(payload) > limit:
++        raise AdbcError("Isolated message exceeds limit", "invalid_data")
++    return struct.pack("<I", len(metadata)) + metadata + payload
++
++
++def _decode(data):
++    if len(data) < 4:
++        raise AdbcError("Invalid isolated response", "invalid_data")
++    length = struct.unpack("<I", data[:4])[0]
++    if length > len(data) - 4:
++        raise AdbcError("Invalid isolated response", "invalid_data")
++    return json.loads(data[4 : 4 + length]), data[4 + length :]
++
++
++def _send_error(pipe, error, limit):
++    try:
++        packet = _encode({"error": json.loads(str(error))}, b"", limit)
++    except (AdbcError, ValueError):
++        packet = _encode(
++            {"error": json.loads(str(AdbcError("Isolated error exceeds limit", "invalid_data")))},
++            b"",
++            limit,
++        )
++    pipe.send_bytes(packet)
++
++
++def _child_main(incoming, outgoing, factory, options_json, principal, limit, max_results):
++    # Worker-authored stdout/stderr must not accidentally escape into service logs.
++    with open(os.devnull, "wb") as sink:
++        os.dup2(sink.fileno(), 1)
++        os.dup2(sink.fileno(), 2)
++    connection = None
++    results = {}
++    sequence = 0
++    try:
++        module, name = factory.split(":", 1)
++        worker_type = getattr(importlib.import_module(module), name)
++        worker = worker_type(**json.loads(options_json))
++        connection = worker.connect(principal)
++        outgoing.send_bytes(_encode({"ready": True}, b"", limit))
++        while True:
++            request, _ = _decode(incoming.recv_bytes(maxlength=limit))
++            try:
++                operation = request["op"]
++                payload = b""
++                header = {"ok": True}
++                if operation == "execute":
++                    if len(results) >= max_results:
++                        raise AdbcError("Isolated result limit reached", "invalid_state")
++                    query = connection.execute(request["sql"])
++                    try:
++                        if query.rows_affected is not None and (
++                            type(query.rows_affected) is not int
++                            or not -(2**63) <= query.rows_affected < 2**63
++                        ):
++                            raise AdbcError("Invalid affected row count", "invalid_data")
++                        payload = _arrow_bytes(query.schema, None, limit - 1024)
++                        sequence += 1
++                        rid = str(sequence)
++                        header = {"result_id": rid, "rows_affected": query.rows_affected}
++                        # Validate the complete response before retaining its cursor.
++                        _encode(header, payload, limit)
++                    except Exception:
++                        query.close()
++                        raise
++                    results[rid] = query
++                elif operation == "schema":
++                    payload = _arrow_bytes(
++                        connection.execute_schema(request["sql"]), None, limit - 1024
++                    )
++                elif operation == "fetch":
++                    query = results[request["result_id"]]
++                    try:
++                        batch = next(query.batches, None)
++                        if batch is None:
++                            results.pop(request["result_id"]).close()
++                            header = {"eof": True}
++                        else:
++                            if not batch.schema.equals(query.schema, check_metadata=True):
++                                raise AdbcError("Isolated result schema changed", "invalid_data")
++                            payload = _arrow_bytes(query.schema, batch, limit - 1024)
++                    except Exception:
++                        failed = results.pop(request["result_id"], None)
++                        if failed is not None:
++                            failed.close()
++                        raise
++                elif operation == "release":
++                    query = results.pop(request["result_id"], None)
++                    if query is not None:
++                        query.close()
++                elif operation == "close":
++                    break
++                else:
++                    raise AdbcError("Unknown isolated operation", "invalid_arguments")
++                outgoing.send_bytes(_encode(header, payload, limit))
++            except AdbcError as error:
++                _send_error(outgoing, error, limit)
++            except Exception:  # noqa: BLE001 -- never expose arbitrary worker errors
++                _send_error(
++                    outgoing, AdbcError("Isolated worker operation failed", "internal"), limit
++                )
++    except (EOFError, BrokenPipeError, OSError):
++        pass
++    except AdbcError as error:
++        try:
++            _send_error(outgoing, error, limit)
++        except (BrokenPipeError, OSError):
++            pass
++    except Exception:  # noqa: BLE001 -- never expose arbitrary worker errors
++        try:
++            _send_error(outgoing, AdbcError("Isolated worker startup failed", "internal"), limit)
++        except (BrokenPipeError, OSError):
++            pass
++    finally:
++        try:
++            for query in results.values():
++                try:
++                    query.close()
++                except Exception:  # noqa: BLE001, S110 -- continue cleanup without logging secrets
++                    pass
++            if connection is not None:
++                connection.close()
++            # For a graceful close, cleanup finishes before acknowledgment.
++            outgoing.send_bytes(_encode({"closed": True}, b"", limit))
++        except Exception:  # noqa: BLE001, S110 -- exit cleanup without logging secrets
++            pass
++        finally:
++            incoming.close()
++            outgoing.close()
++
++
++class _RemoteIterator:
++    def __init__(self, connection, rid):
++        self.connection = connection
++        self.rid = rid
++        self.closed = False
++
++    def __iter__(self):
++        return self
++
++    def __next__(self):
++        if self.closed:
++            raise StopIteration
++        header, payload = self.connection._rpc({"op": "fetch", "result_id": self.rid})
++        if header.get("eof"):
++            self.closed = True
++            raise StopIteration
++        return pa.ipc.open_stream(payload).read_next_batch()
++
++    def close(self):
++        if not self.closed:
++            self.closed = True
++            if self.connection._failure is None:
++                self.connection._rpc({"op": "release", "result_id": self.rid})
++
++
++class _ProcessConnection(Connection):
++    def __init__(
++        self, factory, options_json, principal, timeout, startup_timeout, limit, max_results
++    ):
++        self.timeout = timeout
++        self.limit = limit
++        self._io_lock = threading.Lock()
++        self._state_lock = threading.Lock()
++        self._failure = None
++        self._process_closed = False
++        context = multiprocessing.get_context("spawn")
++        child_read, self._send = context.Pipe(duplex=False)
++        self._receive, child_write = context.Pipe(duplex=False)
++        self._process = context.Process(
++            target=_child_main,
++            args=(child_read, child_write, factory, options_json, principal, limit, max_results),
++            daemon=True,
++        )
++        try:
++            self._process.start()
++        except Exception:  # noqa: BLE001 -- sanitize process startup errors
++            child_read.close()
++            child_write.close()
++            self._send.close()
++            self._receive.close()
++            raise AdbcError("Cannot start isolated worker", "internal") from None
++        child_read.close()
++        child_write.close()
++        try:
++            self._exchange(None, startup_timeout)
++        except Exception:
++            self._stop("invalid_state")
++            raise
++
++    def _stop(self, status):
++        with self._state_lock:
++            if self._failure is not None:
++                return
++            self._failure = status
++            if self._process.is_alive():
++                self._process.terminate()
++                self._process.join(timeout=0.2)
++            if self._process.is_alive():
++                self._process.kill()
++                self._process.join(timeout=0.5)
++            if not self._process.is_alive():
++                self._process.close()
++                self._process_closed = True
++            # Do not close pipe objects underneath a recv/send in another thread.
++            # Terminating the child closes its pipe ends and wakes that thread.
++
++    def _exchange(self, request, timeout):
++        if self._failure is not None:
++            raise AdbcError("Isolated connection is unavailable", self._failure)
++        packet = None if request is None else _encode(request, b"", self.limit)
++        timer = threading.Timer(timeout, self._stop, args=("timeout",))
++        timer.daemon = True
++        timer.start()
++        try:
++            if packet is not None:
++                self._send.send_bytes(packet)
++            data = self._receive.recv_bytes(maxlength=self.limit)
++            timer.cancel()
++            timer.join()
++            if self._failure is not None:
++                raise AdbcError("Isolated operation terminated", self._failure)
++            header, payload = _decode(data)
++            if "error" in header:
++                error = header["error"]
++                raise AdbcError(
++                    error["message"],
++                    error["status"],
++                    sqlstate=bytes(value % 256 for value in error["sqlstate"]).decode("ascii"),
++                    vendor_code=error["vendor_code"],
++                    details={key: base64.b64decode(value) for key, value in error["details"]},
++                )
++            return header, payload
++        except (EOFError, OSError):
++            self._stop("io")
++            raise AdbcError("Isolated worker stopped", self._failure or "io") from None
++        finally:
++            timer.cancel()
++            timer.join()
++            if self._failure is not None:
++                self._send.close()
++                self._receive.close()
++
++    def _rpc(self, request):
++        if not self._io_lock.acquire(timeout=self.timeout):
++            raise AdbcError("Isolated connection is busy", "timeout")
++        try:
++            return self._exchange(request, self.timeout)
++        finally:
++            self._io_lock.release()
++
++    def execute(self, sql):
++        header, payload = self._rpc({"op": "execute", "sql": sql})
++        return QueryResult(
++            pa.ipc.open_stream(payload).schema,
++            _RemoteIterator(self, header["result_id"]),
++            header["rows_affected"],
++        )
++
++    def execute_schema(self, sql):
++        _, payload = self._rpc({"op": "schema", "sql": sql})
++        return pa.ipc.open_stream(payload).schema
++
++    def cancel(self):
++        """Invalidate this connection and terminate its worker process."""
++        self._stop("cancelled")
++        if self._io_lock.acquire(blocking=False):
++            try:
++                self._send.close()
++                self._receive.close()
++            finally:
++                self._io_lock.release()
++
++    def close(self):
++        try:
++            if self._failure is None:
++                self._rpc({"op": "close"})
++        finally:
++            self._stop("invalid_state")
++            if self._io_lock.acquire(blocking=False):
++                try:
++                    self._send.close()
++                    self._receive.close()
++                finally:
++                    self._io_lock.release()
++
++
++class IsolatedWorker(Worker):
++    """Run a trusted worker factory in a separate process for each connection.
++
++    The factory is an importable module:attribute, called with JSON-compatible
++    worker_options. Both opening and callbacks have finite deadlines. A deadline
++    or cancellation kills that connection's process; no state is reconstructed.
++    Pipes carry capped JSON/Arrow messages, not pickled result data. Configure
++    service session quotas to bound process count and OS/container limits to
++    bound arbitrary worker allocations before a batch reaches the IPC boundary.
++    """
++
++    def __init__(
++        self,
++        factory: str,
++        *,
++        target: str = "default",
++        timeout_seconds: float = 5,
++        startup_timeout_seconds: float = 10,
++        max_message_bytes: int = 2 * 1024 * 1024,
++        max_results: int = 32,
++        worker_options: dict | None = None,
++    ):
++        for value in (timeout_seconds, startup_timeout_seconds):
++            if type(value) not in (int, float) or value <= 0 or not math.isfinite(value):
++                raise ValueError("Isolated deadlines must be finite and positive")
++        if type(max_message_bytes) is not int or max_message_bytes < 4096:
++            raise ValueError("Isolated message limit must be an integer >= 4096")
++        if type(max_results) is not int or max_results < 1:
++            raise ValueError("Isolated result limit must be a positive integer")
++        if ":" not in factory or not all(factory.split(":", 1)):
++            raise ValueError("Worker factory must be module:attribute")
++        self.factory = factory
++        self.target = target
++        self.timeout = timeout_seconds
++        self.startup_timeout = startup_timeout_seconds
++        self.limit = max_message_bytes
++        self.max_results = max_results
++        self.options_json = json.dumps(worker_options or {}, allow_nan=False)
++        if len(self.options_json.encode()) > max_message_bytes:
++            raise ValueError("Worker options exceed message limit")
++
++    def connect(self, principal):
++        return _ProcessConnection(
++            self.factory,
++            self.options_json,
++            principal,
++            self.timeout,
++            self.startup_timeout,
++            self.limit,
++            self.max_results,
++        )
+--- /dev/null
++++ b/src/grainlift/telemetry.py
+@@ -0,0 +1,76 @@
++# Copyright (c) 2026 Query Farm LLC
++# SPDX-License-Identifier: Apache-2.0
++"""Scope sensitive transport diagnostics to the Grainlift request context."""
++
++import logging
++import threading
++import time
++from contextvars import ContextVar
++
++_private_request = ContextVar("grainlift_private_request", default=False)
++_install_lock = threading.Lock()
++
++
++class _TransportFilter(logging.Filter):
++    def filter(self, record):
++        return not _private_request.get()
++
++
++_transport_filter = _TransportFilter()
++
++
++def _install_filters():
++    # HTTP modules are loaded by make_wsgi_app before this executes. Recheck at
++    # each request for modules/loggers installed between construction and serving.
++    with _install_lock:
++        for name, logger in list(logging.Logger.manager.loggerDict.items()):
++            if (
++                (name == "vgi_rpc" or name.startswith("vgi_rpc."))
++                and isinstance(logger, logging.Logger)
++                and _transport_filter not in logger.filters
++            ):
++                logger.addFilter(_transport_filter)
++
++
++class PrivateApplication:
++    """Keep VGI diagnostics private during this application's WSGI requests.
++
++    Does not modify handlers, levels, propagation or disabled flags. Other
++    applications retain their normal logging. Grainlift emits only an HTTP
++    status and duration, without paths, principals, arguments or exceptions.
++    """
++
++    def __init__(self, app):
++        self.app = app
++        _install_filters()
++
++    def __call__(self, environ, start_response):
++        _install_filters()
++        token = _private_request.set(True)
++        started = time.monotonic()
++        status_code = 500
++        response = None
++
++        def start(status, headers, exc_info=None):
++            nonlocal status_code
++            status_code = int(status.split(" ", 1)[0])
++            return start_response(status, headers, exc_info)
++
++        try:
++            response = self.app(environ, start)
++            yield from response
++        finally:
++            try:
++                if response is not None:
++                    close = getattr(response, "close", None)
++                    if close is not None:
++                        close()
++            finally:
++                _private_request.reset(token)
++                logging.getLogger("grainlift.access").info(
++                    "Grainlift request completed",
++                    extra={
++                        "http_status": status_code,
++                        "duration_ms": (time.monotonic() - started) * 1000,
++                    },
++                )
+--- /dev/null
++++ b/tests/test_hardening.py
+@@ -0,0 +1,191 @@
++# Copyright (c) 2026 Query Farm LLC
++# SPDX-License-Identifier: Apache-2.0
++"""Validation, independent sessions, quotas, and cancellation without sockets."""
++
++import threading
++import time
++from concurrent.futures import ThreadPoolExecutor
++
++import pytest
++from test_service import TestConnection, TestWorker, context, execute, open_session, value
++
++from grainlift import AdbcError, Limits, Service
++
++
++@pytest.mark.parametrize(
++    "field", ["sessions", "statements_per_session", "batch_bytes", "request_bytes", "sql_bytes"]
++)
++@pytest.mark.parametrize("bad", [0, -1, True, 1.1, float("nan"), float("inf"), "2", None])
++def test_integer_limits(field, bad):
++    with pytest.raises(ValueError, match=field):
++        Limits(**{field: bad})
++
++
++@pytest.mark.parametrize("field", ["idle_seconds", "lock_timeout_seconds", "shutdown_seconds"])
++@pytest.mark.parametrize("bad", [0, -1, True, float("nan"), float("inf"), "2", None])
++def test_duration_limits(field, bad):
++    with pytest.raises(ValueError, match=field):
++        Limits(**{field: bad})
++
++
++@pytest.mark.parametrize("encoded", ["", "{", "private malformed input"])
++def test_malformed_option_has_client_error(encoded):
++    with Service(TestWorker()) as service:
++        sid, ctx = open_session(service)
++        with pytest.raises(AdbcError) as exc:
++            service.set_connection_option(sid, "adbc.connection.autocommit", encoded, ctx)
++        assert exc.value.status == "invalid_arguments"
++        assert "private malformed" not in str(exc.value)
++
++
++class BlockingWorker(TestWorker):
++    def __init__(self, *, cancellable=False, block_open=False):
++        super().__init__()
++        self.started = threading.Event()
++        self.release = threading.Event()
++        self.cancellable = cancellable
++        self.block_open = block_open
++
++    def connect(self, principal):
++        if self.block_open:
++            self.started.set()
++            assert self.release.wait(5)
++        worker = self
++
++        class BlockingConnection(TestConnection):
++            def execute(self, sql):
++                if sql == "block":
++                    worker.started.set()
++                    assert worker.release.wait(5)
++                    if worker.cancellable:
++                        raise AdbcError("Cancelled test operation", "cancelled")
++                return super().execute(sql)
++
++            def cancel(self):
++                if not worker.cancellable:
++                    return super().cancel()
++                worker.release.set()
++
++        connection = BlockingConnection(self.batches)
++        self.connections.append(connection)
++        return connection
++
++
++def blocking_statement(service, sid, ctx):
++    statement = value(service.new_statement(sid, ctx), "statement_id")
++    service.set_sql_query(sid, statement, "block", ctx)
++    return statement
++
++
++def test_independent_session_progress_and_reaping():
++    worker = BlockingWorker()
++    with Service(worker, limits=Limits(idle_seconds=0.1)) as service, ThreadPoolExecutor(2) as pool:
++        sid, ctx = open_session(service)
++        statement = blocking_statement(service, sid, ctx)
++        pending = pool.submit(service.execute, sid, statement, ctx)
++        try:
++            assert worker.started.wait(1)
++            other, other_ctx = open_session(service, "bob")
++            execute(service, other, other_ctx)
++            assert not pending.done()
++            deadline = time.monotonic() + 2
++            while not worker.connections[1].closed and time.monotonic() < deadline:
++                time.sleep(0.01)
++            assert worker.connections[1].closed
++            assert not worker.connections[0].closed
++        finally:
++            worker.release.set()
++            pending.result(timeout=2)
++
++
++def test_opening_reserves_quota():
++    worker = BlockingWorker(block_open=True)
++    with Service(worker, limits=Limits(sessions=1)) as service, ThreadPoolExecutor(1) as pool:
++        pending = pool.submit(open_session, service)
++        try:
++            assert worker.started.wait(1)
++            with pytest.raises(AdbcError, match="Session limit"):
++                open_session(service)
++        finally:
++            worker.release.set()
++            pending.result(timeout=2)
++
++
++def test_busy_session_has_bounded_lock_wait():
++    worker = BlockingWorker()
++    with (
++        Service(worker, limits=Limits(lock_timeout_seconds=0.02)) as service,
++        ThreadPoolExecutor(1) as pool,
++    ):
++        sid, ctx = open_session(service)
++        statement = blocking_statement(service, sid, ctx)
++        pending = pool.submit(service.execute, sid, statement, ctx)
++        try:
++            assert worker.started.wait(1)
++            with pytest.raises(AdbcError) as exc:
++                service.new_statement(sid, ctx)
++            assert exc.value.status == "timeout"
++        finally:
++            worker.release.set()
++            pending.result(timeout=2)
++
++
++@pytest.mark.parametrize("operation", ["connection", "statement"])
++def test_cancellation_reaches_active_callback(operation):
++    worker = BlockingWorker(cancellable=True)
++    with Service(worker) as service, ThreadPoolExecutor(1) as pool:
++        sid, ctx = open_session(service)
++        statement = blocking_statement(service, sid, ctx)
++        pending = pool.submit(service.execute, sid, statement, ctx)
++        try:
++            assert worker.started.wait(1)
++            with pytest.raises(AdbcError, match="unavailable"):
++                service.cancel_connection(sid, context(service, "bob"))
++            assert not worker.release.is_set()
++            if operation == "connection":
++                service.cancel_connection(sid, ctx)
++            else:
++                service.cancel_statement(sid, statement, ctx)
++            with pytest.raises(AdbcError) as exc:
++                pending.result(timeout=2)
++            assert exc.value.status == "cancelled"
++        finally:
++            worker.release.set()
++
++
++def test_shutdown_during_open_releases_late_connection():
++    worker = BlockingWorker(block_open=True)
++    service = Service(worker, limits=Limits(shutdown_seconds=0.05))
++    with ThreadPoolExecutor(1) as pool:
++        pending = pool.submit(open_session, service)
++        try:
++            assert worker.started.wait(1)
++            with pytest.raises(AdbcError, match="Shutdown"):
++                service.close()
++        finally:
++            worker.release.set()
++        with pytest.raises(AdbcError, match="closed"):
++            pending.result(timeout=2)
++    assert worker.connections[0].closed
++    assert service._opening == 0
++    assert not service._sessions
++    service.close()
++
++
++def test_shutdown_busy_inprocess_reports_incomplete_then_cleans_up():
++    worker = BlockingWorker()
++    service = Service(worker, limits=Limits(shutdown_seconds=0.02))
++    with ThreadPoolExecutor(1) as pool:
++        sid, ctx = open_session(service)
++        statement = blocking_statement(service, sid, ctx)
++        pending = pool.submit(service.execute, sid, statement, ctx)
++        try:
++            assert worker.started.wait(1)
++            with pytest.raises(AdbcError, match="Shutdown"):
++                service.close()
++        finally:
++            worker.release.set()
++        pending.result(timeout=2)
++    assert worker.connections[0].closed
++    assert not service._sessions
++    service.close()
+--- /dev/null
++++ b/tests/test_isolation.py
+@@ -0,0 +1,259 @@
++# Copyright (c) 2026 Query Farm LLC
++# SPDX-License-Identifier: Apache-2.0
++"""Real spawned worker processes, deadlines, cancellation, and bounded IPC."""
++
++import os
++import time
++from concurrent.futures import ThreadPoolExecutor
++
++import pyarrow as pa
++import pytest
++
++from grainlift import AdbcError, Connection, IsolatedWorker, QueryResult, Worker
++from grainlift.isolation import _BoundedBuffer, _decode, _encode
++
++SCHEMA = pa.schema([("n", pa.int64())])
++
++
++class ProcessTestWorker(Worker):
++    def __init__(self, block_open=False, block_close=False):
++        self.block_open = block_open
++        self.block_close = block_close
++
++    def connect(self, principal):
++        if principal == "denied":
++            raise AdbcError("Rejected", "unauthorized", sqlstate="28000")
++        if self.block_open:
++            time.sleep(30)
++        return ProcessTestConnection(self.block_close)
++
++
++class ProcessTestConnection(Connection):
++    def __init__(self, block_close):
++        self.block_close = block_close
++
++    def execute(self, sql):
++        if sql == "hang":
++            time.sleep(30)
++        if sql == "exit":
++            os._exit(7)
++        if sql == "error":
++            raise AdbcError(
++                "test",
++                "invalid_data",
++                sqlstate="22000",
++                vendor_code=42,
++                details={"raw": b"\x00\xff"},
++            )
++
++        def batches():
++            if sql == "fetch_hang":
++                time.sleep(30)
++            size = 10000 if sql == "oversized" else 3
++            yield pa.record_batch([list(range(size))], schema=SCHEMA)
++
++        return QueryResult(
++            SCHEMA, batches(), rows_affected=float("nan") if sql == "bad_count" else None
++        )
++
++    def execute_schema(self, sql):
++        return SCHEMA
++
++    def close(self):
++        if self.block_close:
++            time.sleep(30)
++
++
++def isolated(**kwargs):
++    return IsolatedWorker(
++        "test_isolation:ProcessTestWorker", timeout_seconds=0.4, startup_timeout_seconds=4, **kwargs
++    )
++
++
++def test_process_roundtrip_and_cleanup():
++    connection = isolated().connect("alice")
++    try:
++        query = connection.execute("ok")
++        assert query.schema.equals(SCHEMA)
++        assert next(query.batches).column(0).to_pylist() == [0, 1, 2]
++        with pytest.raises(StopIteration):
++            next(query.batches)
++        query.close()
++        assert connection.execute_schema("ok").equals(SCHEMA)
++    finally:
++        connection.close()
++    assert connection._process_closed
++    assert connection._send.closed
++    assert connection._receive.closed
++
++
++@pytest.mark.parametrize("operation", ["hang", "fetch_hang", "exit"])
++def test_timeout_or_crash_invalidates_connection(operation):
++    connection = isolated().connect("alice")
++    started = time.monotonic()
++    try:
++        with pytest.raises(AdbcError) as exc:
++            query = connection.execute(operation)
++            next(query.batches)
++        assert exc.value.status == ("io" if operation == "exit" else "timeout")
++        assert time.monotonic() - started < 3
++        assert connection._process_closed
++        with pytest.raises(AdbcError):
++            connection.execute("ok")
++    finally:
++        connection.close()
++
++
++def test_cancellation_terminates_process():
++    connection = isolated().connect("alice")
++    with ThreadPoolExecutor(1) as pool:
++        pending = pool.submit(connection.execute, "hang")
++        # Wait for the I/O lock, rather than assuming a scheduler order.
++        deadline = time.monotonic() + 1
++        while not connection._io_lock.locked():
++            assert time.monotonic() < deadline
++            time.sleep(0.001)
++        connection.cancel()
++        with pytest.raises(AdbcError) as exc:
++            pending.result(timeout=2)
++        assert exc.value.status == "cancelled"
++    connection.close()
++    assert connection._process_closed
++
++
++def test_hung_startup_has_deadline():
++    worker = IsolatedWorker(
++        "test_isolation:ProcessTestWorker",
++        startup_timeout_seconds=0.5,
++        worker_options={"block_open": True},
++    )
++    started = time.monotonic()
++    with pytest.raises(AdbcError) as exc:
++        worker.connect("alice")
++    assert exc.value.status == "timeout"
++    assert time.monotonic() - started < 3
++
++
++def test_hung_close_is_terminated():
++    connection = isolated(worker_options={"block_close": True}).connect("alice")
++    with pytest.raises(AdbcError) as exc:
++        connection.close()
++    assert exc.value.status == "timeout"
++    assert connection._process_closed
++
++
++def test_oversized_ipc_batch_is_rejected_and_recoverable():
++    connection = isolated(max_message_bytes=4096).connect("alice")
++    try:
++        query = connection.execute("oversized")
++        with pytest.raises(AdbcError) as exc:
++            next(query.batches)
++        assert exc.value.status == "invalid_data"
++        query.close()
++        recovered = connection.execute("ok")
++        assert next(recovered.batches).num_rows == 3
++        recovered.close()
++    finally:
++        connection.close()
++
++
++def test_error_details_survive_process_boundary():
++    import json
++
++    connection = isolated().connect("alice")
++    try:
++        with pytest.raises(AdbcError) as exc:
++            connection.execute("error")
++        wire = json.loads(str(exc.value))
++        assert wire["vendor_code"] == 42
++        assert wire["sqlstate"] == [50, 50, 48, 48, 48]
++        assert wire["details"] == [["raw", "AP8="]]
++    finally:
++        connection.close()
++
++
++@pytest.mark.parametrize("size", [4089, 4090, 4091])
++def test_message_boundary(size):
++    # Four framing bytes and the two-byte JSON object consume six bytes.
++    if size > 4090:
++        with pytest.raises(AdbcError, match="exceeds limit"):
++            _encode({}, b"x" * size, 4096)
++    else:
++        encoded = _encode({}, b"x" * size, 4096)
++        assert _decode(encoded) == ({}, b"x" * size)
++
++
++@pytest.mark.parametrize("size", [4095, 4096, 4097])
++def test_arrow_output_boundary(size):
++    out = _BoundedBuffer(4096)
++    if size > 4096:
++        with pytest.raises(AdbcError, match="exceeds limit"):
++            out.write(b"x" * size)
++        assert out.tell() == 0
++    else:
++        assert out.write(b"x" * size) == size
++
++
++def test_result_quota_and_failed_execute_release_slot():
++    connection = isolated(max_results=2).connect("alice")
++    try:
++        with pytest.raises(AdbcError, match="affected row"):
++            connection.execute("bad_count")
++        first = connection.execute("ok")
++        second = connection.execute("ok")
++        with pytest.raises(AdbcError, match="result limit"):
++            connection.execute("ok")
++        first.close()
++        recovered = connection.execute("ok")
++        recovered.close()
++        second.close()
++    finally:
++        connection.close()
++
++
++def test_startup_preserves_adbc_error():
++    with pytest.raises(AdbcError) as exc:
++        isolated().connect("denied")
++    assert exc.value.status == "unauthorized"
++
++
++def test_service_shutdown_terminates_busy_child():
++    from test_service import open_session, value
++
++    from grainlift import Service
++
++    service = Service(isolated())
++    with ThreadPoolExecutor(1) as pool:
++        sid, ctx = open_session(service)
++        statement = value(service.new_statement(sid, ctx), "statement_id")
++        service.set_sql_query(sid, statement, "hang", ctx)
++        connection = service._sessions[sid].connection
++        pending = pool.submit(service.execute, sid, statement, ctx)
++        try:
++            deadline = time.monotonic() + 1
++            while not connection._io_lock.locked():
++                assert time.monotonic() < deadline
++                time.sleep(0.001)
++            service.close()
++            with pytest.raises(AdbcError) as exc:
++                pending.result(timeout=2)
++            assert exc.value.status == "cancelled"
++            assert not service._sessions
++            assert connection._process_closed
++        finally:
++            service.close()
++
++
++def test_repeated_processes_leave_no_active_children():
++    import multiprocessing
++
++    before = {child.pid for child in multiprocessing.active_children()}
++    for _ in range(10):
++        connection = isolated().connect("alice")
++        query = connection.execute("ok")
++        next(query.batches)
++        query.close()
++        connection.close()
++        assert connection._process_closed
++        assert connection._send.closed and connection._receive.closed
++    assert {child.pid for child in multiprocessing.active_children()} == before
+--- a/tests/test_http.py
++++ b/tests/test_http.py
+@@ -68,11 +68,56 @@
+ 
+ 
+ def test_transport_logs_are_suppressed(caplog):
+-    with Service(TestWorker()) as service:
+-        service.app(tokens={"token": "alice"})
+-        logging.getLogger("vgi_rpc.rpc").error("SECRET downstream exception")
+-        logging.getLogger("vgi_rpc.wire.request").warning("SECRET SQL")
+-        assert not caplog.records
++    class LoggingWorker(TestWorker):
++        def connect(self, principal):
++            logging.getLogger("vgi_rpc.rpc").error("SECRET downstream exception")
++            return super().connect(principal)
++
++    logger = logging.getLogger("vgi_rpc.rpc")
++    before = (logger.disabled, logger.level, logger.propagate, list(logger.handlers))
++    caplog.set_level(logging.DEBUG)
++    with Service(LoggingWorker()) as service:
++        client = _SyncTestClient(
++            service.app(tokens={"token": "alice"}),
++            default_headers={"Authorization": "Bearer token"},
++        )
++        assert (logger.disabled, logger.level, logger.propagate, list(logger.handlers)) == before
++        with http_connect(Grainlift, client=client) as rpc:
++            rpc.open_connection(
++                target="default", database_options_json="[]", connection_options_json="[]"
++            )
++        assert "SECRET" not in caplog.text
++        logger.error("unrelated application remains observable")
++        assert "unrelated application remains observable" in caplog.text
++        assert any(record.name == "grainlift.access" for record in caplog.records)
++
++
++def test_isolated_worker_through_wsgi():
++    from grainlift import IsolatedWorker
++
++    worker = IsolatedWorker("test_isolation:ProcessTestWorker", startup_timeout_seconds=4)
++    with Service(worker) as service:
++        client = _SyncTestClient(
++            service.app(tokens={"token": "alice"}),
++            default_headers={"Authorization": "Bearer token"},
++        )
++        with http_connect(Grainlift, client=client) as rpc:
++            sid = value(
++                rpc.open_connection(
++                    target="default", database_options_json="[]", connection_options_json="[]"
++                ),
++                "session_id",
++            )
++            stmt = value(rpc.new_statement(session_id=sid), "statement_id")
++            rpc.set_sql_query(session_id=sid, statement_id=stmt, sql="ok")
++            rid = value(rpc.execute(session_id=sid, statement_id=stmt), "result_id")
++            with rpc.read_result(session_id=sid, result_id=rid, sequence=0) as stream:
++                assert [item.batch.column(0).to_pylist() for item in stream] == [[0, 1, 2]]
++            rpc.cancel_connection(session_id=sid)
++            with pytest.raises(RpcError, match="cancelled"):
++                rpc.execute(session_id=sid, statement_id=stmt)
++            rpc.close_connection(session_id=sid)
++            assert not service._sessions
+ 
+ 
+ @pytest.mark.parametrize("headroom", [1, 0, -1])

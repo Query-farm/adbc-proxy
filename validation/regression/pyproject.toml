@@ -1,0 +1,84 @@
+# Copyright (c) 2026 ADBC Drivers Contributors
+# Copyright (c) 2026 Query Farm LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[project]
+name = "grainlift-regression"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "adbc-driver-manager==1.12.0",
+  "grainlift-python==0.1.0",
+  "pyarrow==25.0.1",
+  "pytest==9.1.1",
+  "psutil>=7,<9",
+]
+
+[dependency-groups]
+dev = ["mypy>=1.15", "ruff>=0.16", "types-psutil"]
+
+[tool.uv]
+package = false
+
+# Explicit development dependencies until the toolkit and VGI-RPC changes ship.
+[tool.uv.sources]
+grainlift-python = { path = "../../../grainlift-python", editable = true }
+vgi-rpc = { path = "../../../vgi-rpc", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+xfail_strict = true
+markers = ["native: requires the compiled driver and an authenticated loopback HTTP listener"]
+
+# Adapted from ../vgi-python/pyproject.toml: same rules, no lint baseline.
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["soak"]
+
+[tool.ruff.format]
+quote-style = "double"
+exclude = ["*.md"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+mypy_path = "$MYPY_CONFIG_FILE_DIR/typings"
+files = ["tests"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow.*"]
+ignore_missing_imports = true
+
+[tool.pydoclint]
+style = "google"
+arg_type_hints_in_docstring = false
+check_return_types = false
+check_yield_types = false
+check_class_attributes = true
+skip_checking_raises = true
+allow_init_docstring = true
+# Run pydoclint in an isolated environment: its docstring-parser-fork conflicts
+# with VGI-RPC's docstring-parser. Do not add it to project dependencies.

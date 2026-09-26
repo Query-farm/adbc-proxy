@@ -20,7 +20,12 @@ limitations under the License.
 [Candidate v6 evidence](release-results/candidate-v6/README.md) records 609 passing
 tests on each of Python 3.13.12 and 3.14.7 against the matching protocol 0.4 native
 driver. Both local wheels reproduce from their source distributions, using
-unmodified registry VGI-RPC 0.47.1. Remote combined runtime results are separate.
+unmodified registry VGI-RPC 0.47.1. Its
+[prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v6)
+is published and configured for the
+[combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36246917438);
+the quality job passed and runtime jobs were running when recorded. Remote
+combined runtime results are separate from local evidence.
 
 [Historical candidate v4 evidence](release-results/candidate-v4/README.md) records 440 passing
 tests on each of Python 3.13.12 and 3.14.7, including the expanded operation surface.

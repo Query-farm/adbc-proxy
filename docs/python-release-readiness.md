@@ -77,7 +77,7 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 | Load and cleanup | Eight clients, 180/300-second native Waitress runs, injected errors and connection churn; no unexpected errors, child or descriptor leak observed | Measured; memory/long-duration gate remains open |
 | TLS edge | Real Caddy/Waitress HTTPS, certificate/hostname failures, verified Python RPC, authentication, limits, logs and draining | Passed locally; native HTTPS success remains unverified |
 | Runtime CI | SDK 0.4 matrix passed Linux/macOS × Python 3.13/3.14; matching combined candidate v6 and hello-world results are tracked separately | Combined v6 matrix pending |
-| Publication | Public source repositories; candidate v6 built and validated locally; package-index releases remain separate | PyPI release versions/dependency floors pending |
+| Publication | Matching public source revisions and candidate v6 prerelease published; package-index releases remain separate | PyPI release versions/dependency floors pending |
 | Native ARM64 packaging | Separate Custom Test image pull returned registry `denied`; fallback Docker driver rejected a multi-platform build before compilation | Packaging infrastructure gate remains open |
 | Target operations | Resource quotas, affinity, credential rotation and supervisor/shutdown contract documented | Real deployment/cgroup, certificate renewal and signal checks pending |
 
@@ -118,7 +118,11 @@ Earlier load and TLS-edge measurements have not been rerun for these new paths.
 the current protocol 0.4 in fresh environments: 609 tests per interpreter, no
 failures or skips, with both local wheels reproduced from their sdists. Archive
 SHA-256: `63692d5a6fb81208fdf468dd9e225e04646b33bf2dd5fee4978ccac3da8c3f3e`.
-Remote combined runtime results are tracked separately from this local evidence.
+The [prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v6)
+is published and repository variables select its exact archive. The
+[combined runtime matrix](https://github.com/Query-farm/grainlift/actions/runs/36246917438)
+passed its quality job and was running the four runtime jobs when this record
+was written. Those remote results are separate from the local evidence.
 
 [Candidate v4](../validation/release-results/candidate-v4/README.md) is a historical
 [GitHub prerelease](https://github.com/Query-farm/grainlift/releases/tag/python-candidate-v4),
